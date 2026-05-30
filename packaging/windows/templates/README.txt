@@ -99,5 +99,5 @@ Issues: https://github.com/AIDC-AI/Pixelle-Video/issues
 
 See LICENSE file in Pixelle-Video/ folder
 
-Copyright (c) 2025 Pixelle.AI
+Copyright (c) 2025 dazhao
 

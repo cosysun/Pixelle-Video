@@ -1,0 +1,44 @@
+{
+  "1": {
+    "inputs": {
+      "value": "这是参考音频对应的文本，需要和参考音频内容完全一致。"
+    },
+    "class_type": "PrimitiveStringMultiline",
+    "_meta": {
+      "title": "$text.value!"
+    }
+  },
+  "4": {
+    "inputs": {
+      "sample": "dazhao.wav",
+      "speech": [
+        "1",
+        0
+      ],
+      "seed": 1847,
+      "model": "F5v1",
+      "vocoder": "auto",
+      "speed": 1.2,
+      "model_type": "F5TTS_Base"
+    },
+    "class_type": "F5TTSAudio",
+    "_meta": {
+      "title": "F5-TTS"
+    }
+  },
+  "5": {
+    "inputs": {
+      "filename_prefix": "audio/ComfyUI",
+      "quality": "V0",
+      "audioUI": "/api/view?filename=ComfyUI_00028_.mp3&type=output&subfolder=audio&rand=0.026837243047928006",
+      "audio": [
+        "4",
+        0
+      ]
+    },
+    "class_type": "SaveAudioMP3",
+    "_meta": {
+      "title": "Save Audio (MP3)"
+    }
+  }
+}

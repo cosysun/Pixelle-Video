@@ -1,7 +1,7 @@
 {
   "3": {
     "inputs": {
-      "seed": 388600705609480,
+      "seed": 467748891555561,
       "steps": 4,
       "cfg": 1,
       "sampler_name": "euler",
@@ -33,8 +33,8 @@
     "inputs": {
       "text": "",
       "clip": [
-        "67",
-        1
+        "38",
+        0
       ]
     },
     "class_type": "CLIPTextEncode",
@@ -46,8 +46,8 @@
     "inputs": {
       "text": "NSFW",
       "clip": [
-        "67",
-        1
+        "38",
+        0
       ]
     },
     "class_type": "CLIPTextEncode",
@@ -73,7 +73,7 @@
   },
   "37": {
     "inputs": {
-      "unet_name": "qwen_image_fp8_e4m3fn.safetensors",
+      "unet_name": "z_image_turbo_bf16.safetensors",
       "weight_dtype": "default"
     },
     "class_type": "UNETLoader",
@@ -83,7 +83,7 @@
   },
   "38": {
     "inputs": {
-      "clip_name": "qwen_2.5_vl_7b_fp8_scaled.safetensors",
+      "clip_name": "qwen_3_4b.safetensors",
       "type": "qwen_image",
       "device": "default"
     },
@@ -94,7 +94,7 @@
   },
   "39": {
     "inputs": {
-      "vae_name": "qwen_image_vae.safetensors"
+      "vae_name": "ae.safetensors"
     },
     "class_type": "VAELoader",
     "_meta": {
@@ -103,14 +103,8 @@
   },
   "58": {
     "inputs": {
-      "width": [
-        "90",
-        0
-      ],
-      "height": [
-        "91",
-        0
-      ],
+      "width": 1024,
+      "height": 1024,
       "batch_size": 1
     },
     "class_type": "EmptySD3LatentImage",
@@ -131,54 +125,17 @@
       "title": "Save Image"
     }
   },
-  "67": {
-    "inputs": {
-      "lora_name": "Qwen-Image-Lightning-4steps-V1.0.safetensors",
-      "strength_model": 1.0000000000000002,
-      "strength_clip": 1,
-      "model": [
-        "37",
-        0
-      ],
-      "clip": [
-        "38",
-        0
-      ]
-    },
-    "class_type": "LoraLoader",
-    "_meta": {
-      "title": "Load LoRA"
-    }
-  },
   "86": {
     "inputs": {
-      "shift": 3.1000000000000005,
+      "shift": 3.1,
       "model": [
-        "67",
+        "37",
         0
       ]
     },
     "class_type": "ModelSamplingAuraFlow",
     "_meta": {
       "title": "ModelSamplingAuraFlow"
-    }
-  },
-  "90": {
-    "inputs": {
-      "value": 768
-    },
-    "class_type": "easy int",
-    "_meta": {
-      "title": "$width.value"
-    }
-  },
-  "91": {
-    "inputs": {
-      "value": 1024
-    },
-    "class_type": "easy int",
-    "_meta": {
-      "title": "$height.value"
     }
   }
 }

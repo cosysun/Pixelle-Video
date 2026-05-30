@@ -2,7 +2,7 @@
   "language_name": "简体中文",
   "t": {
     "app.title": "⚡ Pixelle-Video - AI 全自动短视频引擎",
-    "app.subtitle": "Pixelle.AI 提供支持",
+    "app.subtitle": "dazhao 提供支持",
     "section.content_input": "📝 视频脚本",
     "section.bgm": "🎵 背景音乐",
     "section.tts": "🎤 配音合成",
@@ -103,7 +103,7 @@
     "template.preview_param_width": "宽度",
     "template.preview_param_height": "高度",
     "template.preview_default_title": "AI 改变内容创作",
-    "template.preview_default_text": "Pixelle.AI 正在用人工智能改变内容创作的方式，让每个人都能轻松制作专业级视频。",
+    "template.preview_default_text": "dazhao 正在用人工智能改变内容创作的方式，让每个人都能轻松制作专业级视频。",
     "template.preview_button": "🖼️ 生成预览",
     "template.preview_generating": "正在生成模板预览...",
     "template.preview_success": "✅ 预览生成成功！",

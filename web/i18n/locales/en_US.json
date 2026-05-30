@@ -2,7 +2,7 @@
   "language_name": "English",
   "t": {
     "app.title": "⚡ Pixelle-Video - AI Auto Short Video Engine",
-    "app.subtitle": "Powered by Pixelle.AI",
+    "app.subtitle": "Powered by dazhao",
     "section.content_input": "📝 Video Script",
     "section.bgm": "🎵 Background Music",
     "section.tts": "🎤 Voiceover",
@@ -103,7 +103,7 @@
     "template.preview_param_width": "Width",
     "template.preview_param_height": "Height",
     "template.preview_default_title": "AI Changes Content Creation",
-    "template.preview_default_text": "Artificial intelligence is transforming the way Pixelle.AI creates content, making it easy for everyone to produce professional-grade videos.",
+    "template.preview_default_text": "Artificial intelligence is transforming the way dazhao creates content, making it easy for everyone to produce professional-grade videos.",
     "template.preview_button": "🖼️ Generate Preview",
     "template.preview_generating": "Generating template preview...",
     "template.preview_success": "✅ Preview generated successfully!",

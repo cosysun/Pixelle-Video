@@ -61,7 +61,10 @@ def fetch_available_models(api_key: str, base_url: str, timeout: float = 10.0) -
         response.raise_for_status()
         
         data = response.json()
-        models = [model["id"] for model in data.get("data", [])]
+        # Some providers (e.g. Ollama when no model is pulled) may return
+        # {"data": null} instead of {"data": []}, guard against that.
+        model_list = data.get("data") or []
+        models = [model["id"] for model in model_list if model and model.get("id")]
         
         # Sort models alphabetically for better UX
         models.sort()

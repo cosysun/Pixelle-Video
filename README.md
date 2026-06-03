@@ -33,6 +33,7 @@ https://github.com/user-attachments/assets/a42e7457-fcc8-40da-83fc-784c45a8b95d
 
 ## 📋 最近更新
 
+- ✅ **2026-06-01**: 新增直连 API 媒体模型配置，支持在 WebUI 中配置图像/视频模型供应商、Base URL 与代理开关
 - ✅ **2026-01-26**: 新增「动作迁移」模块，上传参考视频和图片进行动作迁移
 - ✅ **2026-01-14**: 新增「数字人口播」和「图生视频」流水线，新增多语言 TTS 音色支持
 - ✅ **2026-01-06**: 新增 RunningHub 48G 显存机器调用支持
@@ -52,12 +53,13 @@ https://github.com/user-attachments/assets/a42e7457-fcc8-40da-83fc-784c45a8b95d
 - ✅ **AI 智能文案** - 根据主题智能创作解说词，无需自己写脚本
 - ✅ **AI 生成配图** - 每句话都配上精美的 AI 插图
 - ✅ **AI 生成视频** - 支持使用 AI 视频生成模型（如 WAN 2.1）创建动态视频内容
+- ✅ **直连模型 API** - 可直接调用 DashScope、OpenAI、Seedream、Seedance、Kling 等图像/视频生成服务
 - ✅ **AI 生成语音** - 支持 Edge-TTS、Index-TTS 等众多主流 TTS 方案
 - ✅ **背景音乐** - 支持添加 BGM，让视频更有氛围
 - ✅ **视觉风格** - 多种模板可选，打造独特视频风格
 - ✅ **灵活尺寸** - 支持竖屏、横屏等多种视频尺寸
 - ✅ **多种 AI 模型** - 支持 GPT、通义千问、DeepSeek、Ollama 等
-- ✅ **原子能力灵活组合** - 基于 ComfyUI 架构，可使用预置工作流，也可自定义任意能力（如替换生图模型为 FLUX、替换 TTS 为 ChatTTS 等）
+- ✅ **原子能力灵活组合** - 支持 ComfyUI / RunningHub 工作流，也支持直连 API 模型，可按需替换图像、视频、TTS、VLM 等能力
 
 
 ## 📊 视频生成流程
@@ -247,7 +249,8 @@ uv run streamlit run web/app.py
 
 首次使用时，展开「⚙️ 系统配置」面板，填写：
 - **LLM 配置**: 选择 AI 模型（如通义千问、GPT 等）并填入 API Key
-- **图像配置**: 如需生成图片，配置 ComfyUI 地址或 RunningHub API Key
+- **ComfyUI / RunningHub 配置**: 如需使用工作流生成图片、视频或语音，配置本地 ComfyUI 地址或 RunningHub API Key
+- **API 媒体模型配置**: 如需直连图像/视频模型，配置 DashScope、OpenAI、ARK、Kling 等供应商的 API Key、Base URL 和代理选项
 
 配置好后点击「保存配置」，就可以开始生成视频了！
 
@@ -275,8 +278,8 @@ uv run streamlit run web/app.py
 - Base URL: API 地址
 - Model: 模型名称
 
-#### 2. 图像配置
-用于生成视频配图的 AI。
+#### 2. ComfyUI / RunningHub 配置
+用于通过 ComfyUI 工作流生成视频配图、视频片段或语音。
 
 **本地部署（推荐）**  
 - ComfyUI URL: 本地 ComfyUI 服务地址（默认 http://127.0.0.1:8188）
@@ -284,6 +287,24 @@ uv run streamlit run web/app.py
 
 **云端部署**  
 - RunningHub API Key: 云端图像生成服务的密钥
+
+#### 3. API 媒体模型配置
+用于不依赖 ComfyUI/RunningHub，直接调用模型供应商的图像、视频或素材分析能力。
+
+**支持的供应商**
+- OpenAI / GPT Image：用于 GPT 图像生成模型
+- DashScope / Wan / HappyHorse：用于通义万象图像、视频生成
+- Volcengine ARK / Seedream / Seedance：用于字节 Seedream 图像和 Seedance 视频生成
+- Kling AI / 可灵：用于可灵视频生成
+
+**可配置项**
+- API Key / Access Key / Secret Key：模型供应商鉴权信息
+- Base URL：模型服务地址，WebUI 会提供官方默认地址
+- 本地代理：如 `http://127.0.0.1:9090`
+- 启用代理：每个供应商可单独选择是否走本地代理
+- 打印模型请求参数：调试用，会在终端打印发送给模型的 prompt、模型名和输入文件路径
+
+> 💡 如果你只使用 ComfyUI 或 RunningHub，可以不填写 API 媒体模型配置；如果你选择 `api/...` 工作流，则需要配置对应供应商的密钥。
 
 配置完成后点击「保存配置」。
 
@@ -329,6 +350,7 @@ uv run streamlit run web/app.py
 **ComfyUI 工作流**  
 - 从下拉菜单选择图像生成工作流
 - 支持本地部署（selfhost）和云端（RunningHub）工作流
+- 也支持选择 `api/...` 直连图像模型工作流（需先在系统配置中填写对应供应商密钥）
 - 默认使用 `image_flux.json`
 - 如果懂 ComfyUI，可以放自己的工作流到 `workflows/` 文件夹
 
@@ -355,6 +377,14 @@ uv run streamlit run web/app.py
 - 点击「预览模板」可以自定义参数测试效果
 - 如果懂 HTML，可以在 `templates/` 文件夹创建自己的模板
 - 🔗 [查看所有模板效果图](https://aidc-ai.github.io/Pixelle-Video/zh/user-guide/templates/#_3)
+
+#### API 视频生成
+当选择支持动态视频的模板或扩展工作流时，可以使用直连 API 视频模型生成片段。
+
+- 支持 DashScope Wan / HappyHorse、Kling、Seedance 等视频模型
+- 支持按模型能力显示分辨率、画幅比例、时长、水印、原生音频等参数
+- 支持网络下载重试与内容审核失败后的提示词中性化重试
+- 在「自定义素材」工作流中，API 视频片段会尽量根据旁白音频时长生成，并使用相邻片段信息提升连贯性
 
 
 ### 🎬 生成视频（右侧栏）
@@ -444,4 +474,3 @@ Pixelle-Video 的设计受到以下优秀开源项目的启发：
 ## ⭐ Star History
 
 [![Star History Chart](https://api.star-history.com/svg?repos=AIDC-AI/Pixelle-Video&type=Date)](https://star-history.com/#AIDC-AI/Pixelle-Video&Date)
-

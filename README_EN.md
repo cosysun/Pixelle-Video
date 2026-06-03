@@ -32,6 +32,7 @@ Just input a **topic**, and Pixelle-Video will automatically:
 
 ## 📋 Recent Updates
 
+- ✅ **2026-06-01**: Added direct API media model configuration in WebUI, including image/video provider credentials, Base URLs, and per-provider proxy toggles
 - ✅ **2026-01-26**: Added the Motion Transfer pipeline — upload a reference video and an image to transfer motion.
 - ✅ **2026-01-14**: Added "Digital Human" and "Image-to-Video" pipelines, multi-language TTS voices support
 - ✅ **2026-01-06**: Added RunningHub 48G VRAM machine support
@@ -51,12 +52,13 @@ Just input a **topic**, and Pixelle-Video will automatically:
 - ✅ **AI Smart Copywriting** - Intelligently create narration based on topic, no need to write scripts yourself
 - ✅ **AI Generated Images** - Each sentence comes with beautiful AI illustrations
 - ✅ **AI Generated Videos** - Support AI video generation models (like WAN 2.1) to create dynamic video content
+- ✅ **Direct Model APIs** - Directly call image/video generation services from DashScope, OpenAI, Seedream, Seedance, Kling, and more
 - ✅ **AI Generated Voice** - Support Edge-TTS, Index-TTS and many other mainstream TTS solutions
 - ✅ **Background Music** - Support adding BGM to make videos more atmospheric
 - ✅ **Visual Styles** - Multiple templates to choose from, create unique video styles
 - ✅ **Flexible Dimensions** - Support portrait, landscape and other video dimensions
 - ✅ **Multiple AI Models** - Support GPT, Qwen, DeepSeek, Ollama and more
-- ✅ **Flexible Atomic Capability Combination** - Based on ComfyUI architecture, can use preset workflows or customize any capability (such as replacing image generation model with FLUX, replacing TTS with ChatTTS, etc.)
+- ✅ **Flexible Atomic Capability Combination** - Supports ComfyUI / RunningHub workflows and direct API models, allowing image, video, TTS, VLM and other capabilities to be swapped as needed
 
 
 ## 📊 Video Generation Pipeline
@@ -243,7 +245,8 @@ Browser will automatically open http://localhost:8501
 
 On first use, expand the "⚙️ System Configuration" panel and fill in:
 - **LLM Configuration**: Select AI model (such as Qwen, GPT, etc.) and enter API Key
-- **Image Configuration**: If you need to generate images, configure ComfyUI address or RunningHub API Key
+- **ComfyUI / RunningHub Configuration**: Configure local ComfyUI or RunningHub API Key if you want to use workflow-based image, video, or voice generation
+- **API Media Model Configuration**: Configure API Key, Base URL, and proxy options for direct image/video model providers such as DashScope, OpenAI, ARK, and Kling
 
 After configuration, click "Save Configuration", and you can start generating videos!
 
@@ -271,8 +274,8 @@ Used for generating video scripts.
 - Base URL: API address
 - Model: Model name
 
-#### 2. Image Configuration
-Used for generating video images.
+#### 2. ComfyUI / RunningHub Configuration
+Used for generating video images, video clips, or voices through ComfyUI workflows.
 
 **Local Deployment (Recommended)**  
 - ComfyUI URL: Local ComfyUI service address (default http://127.0.0.1:8188)
@@ -280,6 +283,24 @@ Used for generating video images.
 
 **Cloud Deployment**  
 - RunningHub API Key: Cloud image generation service key
+
+#### 3. API Media Model Configuration
+Used to directly call image, video, or asset-analysis model providers without relying on ComfyUI/RunningHub.
+
+**Supported Providers**
+- OpenAI / GPT Image: for GPT image generation models
+- DashScope / Wan / HappyHorse: for Alibaba Tongyi Wan image and video generation
+- Volcengine ARK / Seedream / Seedance: for Seedream image generation and Seedance video generation
+- Kling AI: for Kling video generation
+
+**Configurable Items**
+- API Key / Access Key / Secret Key: provider credentials
+- Base URL: model service endpoint, with official defaults prefilled in WebUI
+- Local proxy: for example `http://127.0.0.1:9090`
+- Use proxy: each provider can independently choose whether to route requests through the local proxy
+- Print model request parameters: debug option that prints prompts, model names, and input file paths to the terminal
+
+> 💡 If you only use ComfyUI or RunningHub, you can leave API Media Model Configuration empty. If you choose an `api/...` workflow, configure the corresponding provider credentials first.
 
 After configuration, click "Save Configuration".
 
@@ -325,6 +346,7 @@ Determine what style of images AI generates.
 **ComfyUI Workflow**  
 - Select image generation workflow from dropdown menu
 - Supports local deployment (selfhost) and cloud (RunningHub) workflows
+- Also supports `api/...` direct image model workflows after configuring the corresponding provider credentials
 - Default uses `image_flux.json`
 - If you know ComfyUI, you can put your own workflows in the `workflows/` folder
 
@@ -351,6 +373,14 @@ Determines video layout and design.
 - Click "Preview Template" to test effect with custom parameters
 - If you know HTML, you can create your own templates in the `templates/` folder
 - 🔗 [View All Template Previews](https://aidc-ai.github.io/Pixelle-Video/user-guide/templates/#built-in-template-preview)
+
+#### API Video Generation
+When using dynamic video templates or extension workflows, you can generate clips through direct API video models.
+
+- Supports DashScope Wan / HappyHorse, Kling, Seedance and other video models
+- Displays model-aware options such as resolution, aspect ratio, duration, watermark, and native audio
+- Supports network/download retries and LLM-based prompt neutralization retry for content-inspection failures
+- In the Custom Media workflow, API video segments try to follow narration audio duration and use neighboring segment information to improve continuity
 
 
 ### 🎬 Generate Video (Right Column)
@@ -437,4 +467,3 @@ This project is released under the Apache License 2.0. For details, please see t
 ## ⭐ Star History
 
 [![Star History Chart](https://api.star-history.com/svg?repos=AIDC-AI/Pixelle-Video&type=Date)](https://star-history.com/#AIDC-AI/Pixelle-Video&Date)
-

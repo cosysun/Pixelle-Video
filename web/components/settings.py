@@ -28,7 +28,7 @@ def render_advanced_settings():
     
     # Expand if not configured, collapse if configured
     with st.expander(tr("settings.title"), expanded=not is_configured):
-        # 2-column layout: LLM | ComfyUI
+        # 2-column layout: LLM | ComfyUI, followed by direct media API providers.
         llm_col, comfyui_col = st.columns(2)
         
         # ====================================================================
@@ -289,6 +289,143 @@ def render_advanced_settings():
                     )
                     # Convert display value back to actual value
                     runninghub_48g_enabled = runninghub_instance_type_display == tr("settings.comfyui.runninghub_instance_48g")
+
+        # ====================================================================
+        # Direct API media providers
+        # ====================================================================
+        zh = get_language() == "zh_CN"
+        api_cfg = config_manager.get_api_providers_config()
+        common_cfg = api_cfg.get("common", {})
+        openai_cfg = api_cfg.get("openai", {})
+        dashscope_cfg = api_cfg.get("dashscope", {})
+        ark_cfg = api_cfg.get("ark", {})
+        kling_cfg = api_cfg.get("kling", {})
+        default_api_base_urls = {
+            "openai": "https://api.openai.com/v1",
+            "dashscope": "https://dashscope.aliyuncs.com/api/v1",
+            "ark": "https://ark.cn-beijing.volces.com/api/v3",
+            "kling": "https://api-beijing.klingai.com",
+        }
+
+        with st.container(border=True):
+            st.markdown("**🧩 API 媒体模型**" if zh else "**🧩 API Media Models**")
+            st.caption(
+                "用于直连图像/视频模型，不影响上方 LLM 与 ComfyUI/RunningHub 配置。"
+                if zh
+                else "Used for direct image/video model calls. This does not affect the LLM or ComfyUI/RunningHub settings above."
+            )
+
+            common_col, proxy_col = st.columns(2)
+            with common_col:
+                api_print_model_input = st.checkbox(
+                    "打印模型请求参数" if zh else "Print model request parameters",
+                    value=bool(common_cfg.get("print_model_input", False)),
+                    help=(
+                        "调试用。开启后会在终端打印发送给图像/视频模型的 prompt、模型名和输入文件路径。"
+                        if zh
+                        else "For debugging. Prints prompts, model names and input file paths sent to image/video models."
+                    ),
+                    key="api_media_print_model_input",
+                )
+            with proxy_col:
+                api_local_proxy = st.text_input(
+                    "本地代理（可选）" if zh else "Local proxy (optional)",
+                    value=common_cfg.get("local_proxy", ""),
+                    placeholder="http://127.0.0.1:9090",
+                    help=(
+                        "仅部分提供商会使用，例如 OpenAI 图像模型。留空表示不使用代理。"
+                        if zh
+                        else "Only used by some providers, such as OpenAI image models. Leave blank to disable."
+                    ),
+                    key="api_media_local_proxy",
+                )
+
+            st.markdown("---")
+
+            provider_col1, provider_col2 = st.columns(2)
+            with provider_col1:
+                st.markdown("**OpenAI / GPT Image**")
+                api_openai_use_proxy = st.checkbox(
+                    "OpenAI 启用代理" if zh else "Use proxy for OpenAI",
+                    value=bool(openai_cfg.get("use_proxy", False)),
+                    key="api_media_openai_use_proxy",
+                )
+                api_openai_key = st.text_input(
+                    "OpenAI API Key",
+                    value=openai_cfg.get("api_key", ""),
+                    type="password",
+                    key="api_media_openai_key",
+                )
+                api_openai_base_url = st.text_input(
+                    "OpenAI Base URL",
+                    value=openai_cfg.get("base_url") or default_api_base_urls["openai"],
+                    placeholder="https://api.openai.com/v1",
+                    key="api_media_openai_base_url",
+                )
+
+                st.markdown("**DashScope / Wan / HappyHorse**")
+                api_dashscope_use_proxy = st.checkbox(
+                    "DashScope 启用代理" if zh else "Use proxy for DashScope",
+                    value=bool(dashscope_cfg.get("use_proxy", False)),
+                    key="api_media_dashscope_use_proxy",
+                )
+                api_dashscope_key = st.text_input(
+                    "DashScope API Key",
+                    value=dashscope_cfg.get("api_key", ""),
+                    type="password",
+                    key="api_media_dashscope_key",
+                )
+                api_dashscope_base_url = st.text_input(
+                    "DashScope Base URL",
+                    value=dashscope_cfg.get("base_url") or default_api_base_urls["dashscope"],
+                    placeholder="https://dashscope.aliyuncs.com/api/v1",
+                    key="api_media_dashscope_base_url",
+                )
+
+            with provider_col2:
+                st.markdown("**Volcengine ARK / Seedream / Seedance**")
+                api_ark_use_proxy = st.checkbox(
+                    "ARK 启用代理" if zh else "Use proxy for ARK",
+                    value=bool(ark_cfg.get("use_proxy", False)),
+                    key="api_media_ark_use_proxy",
+                )
+                api_ark_key = st.text_input(
+                    "ARK API Key",
+                    value=ark_cfg.get("api_key", ""),
+                    type="password",
+                    key="api_media_ark_key",
+                )
+                api_ark_base_url = st.text_input(
+                    "ARK Base URL",
+                    value=ark_cfg.get("base_url") or default_api_base_urls["ark"],
+                    placeholder="https://ark.cn-beijing.volces.com/api/v3",
+                    key="api_media_ark_base_url",
+                )
+
+                st.markdown("**Kling AI / 可灵**")
+                api_kling_use_proxy = st.checkbox(
+                    "Kling 启用代理" if zh else "Use proxy for Kling",
+                    value=bool(kling_cfg.get("use_proxy", False)),
+                    key="api_media_kling_use_proxy",
+                )
+                api_kling_base_url = st.text_input(
+                    "Kling Base URL",
+                    value=kling_cfg.get("base_url") or default_api_base_urls["kling"],
+                    placeholder="https://api-beijing.klingai.com",
+                    key="api_media_kling_base_url",
+                )
+                api_kling_access_key = st.text_input(
+                    "Kling Access Key",
+                    value=kling_cfg.get("access_key", ""),
+                    type="password",
+                    key="api_media_kling_access_key",
+                )
+                api_kling_secret_key = st.text_input(
+                    "Kling Secret Key",
+                    value=kling_cfg.get("secret_key", ""),
+                    type="password",
+                    key="api_media_kling_secret_key",
+                )
         
         # ====================================================================
         # Action Buttons (full width at bottom)
@@ -315,6 +452,33 @@ def render_advanced_settings():
                         runninghub_concurrent_limit=int(runninghub_concurrent_limit),
                         runninghub_instance_type=instance_type
                     )
+
+                    # Save direct image/video API provider configuration.
+                    config_manager.set_api_provider_config("common", {
+                        "print_model_input": bool(api_print_model_input),
+                        "local_proxy": api_local_proxy or "",
+                    })
+                    config_manager.set_api_provider_config("openai", {
+                        "api_key": api_openai_key or "",
+                        "base_url": api_openai_base_url or "",
+                        "use_proxy": bool(api_openai_use_proxy),
+                    })
+                    config_manager.set_api_provider_config("dashscope", {
+                        "api_key": api_dashscope_key or "",
+                        "base_url": api_dashscope_base_url or "",
+                        "use_proxy": bool(api_dashscope_use_proxy),
+                    })
+                    config_manager.set_api_provider_config("ark", {
+                        "api_key": api_ark_key or "",
+                        "base_url": api_ark_base_url or "",
+                        "use_proxy": bool(api_ark_use_proxy),
+                    })
+                    config_manager.set_api_provider_config("kling", {
+                        "base_url": api_kling_base_url or "",
+                        "access_key": api_kling_access_key or "",
+                        "secret_key": api_kling_secret_key or "",
+                        "use_proxy": bool(api_kling_use_proxy),
+                    })
                     
                     # Only save to file if LLM config is valid
                     if llm_api_key and llm_base_url and llm_model:
@@ -332,4 +496,3 @@ def render_advanced_settings():
                 config_manager.save()
                 st.success(tr("status.config_reset"))
                 safe_rerun()
-

@@ -23,6 +23,8 @@ from api.dependencies import PixelleVideoDep
 from api.schemas.content import (
     NarrationGenerateRequest,
     NarrationGenerateResponse,
+    ScriptPreviewRequest,
+    ScriptPreviewResponse,
     ImagePromptGenerateRequest,
     ImagePromptGenerateResponse,
     TitleGenerateRequest,
@@ -32,6 +34,8 @@ from pixelle_video.utils.content_generators import (
     generate_narrations_from_topic,
     generate_image_prompts,
     generate_title,
+    generate_script_preview,
+    resolve_content_style_params,
 )
 
 router = APIRouter(prefix="/content", tags=["Content Generation"])
@@ -63,7 +67,8 @@ async def generate_narration(
             topic=request.text,
             n_scenes=request.n_scenes,
             min_words=request.min_words,
-            max_words=request.max_words
+            max_words=request.max_words,
+            content_style=request.content_style,
         )
         
         return NarrationGenerateResponse(
@@ -72,6 +77,39 @@ async def generate_narration(
         
     except Exception as e:
         logger.error(f"Narration generation error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/script-preview", response_model=ScriptPreviewResponse)
+async def generate_script_preview_endpoint(
+    request: ScriptPreviewRequest,
+    pixelle_video: PixelleVideoDep
+):
+    """
+    Generate narrations and title for preview/edit before video generation.
+    """
+    try:
+        style_params = resolve_content_style_params(
+            content_style=request.content_style,
+            n_scenes=request.n_scenes,
+            min_words=request.min_words,
+            max_words=request.max_words,
+        )
+        result = await generate_script_preview(
+            llm_service=pixelle_video.llm,
+            topic=request.text,
+            n_scenes=style_params["n_scenes"],
+            min_words=style_params["min_words"],
+            max_words=style_params["max_words"],
+            content_style=request.content_style,
+            title=request.title,
+        )
+        return ScriptPreviewResponse(
+            narrations=result["narrations"],
+            title=result["title"],
+        )
+    except Exception as e:
+        logger.error(f"Script preview generation error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -99,7 +137,8 @@ async def generate_image_prompt(
             llm_service=pixelle_video.llm,
             narrations=request.narrations,
             min_words=request.min_words,
-            max_words=request.max_words
+            max_words=request.max_words,
+            content_style=request.content_style,
         )
         
         return ImagePromptGenerateResponse(
@@ -133,7 +172,8 @@ async def generate_title_endpoint(
         title = await generate_title(
             llm_service=pixelle_video.llm,
             content=request.text,
-            strategy="llm"
+            strategy="llm",
+            content_style=request.content_style,
         )
         
         return TitleGenerateResponse(

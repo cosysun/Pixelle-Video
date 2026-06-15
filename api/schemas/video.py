@@ -17,6 +17,8 @@ Video generation API schemas
 from typing import Optional, Literal, Dict, Any
 from pydantic import BaseModel, Field
 
+ContentStyle = Literal["general", "tech_pop"]
+
 
 class VideoGenerateRequest(BaseModel):
     """Video generation request"""
@@ -35,6 +37,10 @@ class VideoGenerateRequest(BaseModel):
     
     # === Basic Config ===
     n_scenes: Optional[int] = Field(5, ge=1, le=20, description="Number of scenes (only used in 'generate' mode, ignored in 'fixed' mode)")
+    content_style: ContentStyle = Field(
+        "general",
+        description="Content style: 'general' for lifestyle/motivational, 'tech_pop' for computer science科普"
+    )
     
     # === TTS Parameters ===
     tts_workflow: Optional[str] = Field(

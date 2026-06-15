@@ -83,17 +83,49 @@ def render_content_input():
                 help=tr("input.title_help")
             )
             
-            # Number of scenes (only show in generate mode)
+            # Number of scenes and content style (only show in generate mode)
+            content_style = "general"
+            min_narration_words = 5
+            max_narration_words = 20
+
             if mode == "generate":
+                content_style_options = {
+                    "general": tr("content_style.general"),
+                    "tech_pop": tr("content_style.tech_pop"),
+                }
+                content_style = st.selectbox(
+                    tr("content_style.label"),
+                    options=list(content_style_options.keys()),
+                    format_func=lambda x: content_style_options[x],
+                    index=0,
+                    help=tr("content_style.help"),
+                )
+
+                default_n_scenes = 8 if content_style == "tech_pop" else 5
                 n_scenes = st.slider(
                     tr("video.frames"),
                     min_value=3,
                     max_value=30,
-                    value=5,
+                    value=default_n_scenes,
                     help=tr("video.frames_help"),
-                    label_visibility="collapsed"
+                    label_visibility="collapsed",
+                    key=f"n_scenes_{content_style}",
                 )
                 st.caption(tr("video.frames_label", n=n_scenes))
+
+                default_min = 25 if content_style == "tech_pop" else 5
+                default_max = 55 if content_style == "tech_pop" else 20
+                word_range = st.slider(
+                    tr("content_style.word_range_label"),
+                    min_value=5,
+                    max_value=100,
+                    value=(default_min, default_max),
+                    help=tr("content_style.word_range_help"),
+                )
+                min_narration_words, max_narration_words = word_range
+
+                if content_style == "tech_pop":
+                    st.caption(tr("content_style.tech_pop_hint"))
             else:
                 # Fixed mode: n_scenes is ignored, set default value
                 n_scenes = 5
@@ -105,7 +137,10 @@ def render_content_input():
                 "text": text,
                 "title": title,
                 "n_scenes": n_scenes,
-                "split_mode": split_mode
+                "split_mode": split_mode,
+                "content_style": content_style,
+                "min_narration_words": min_narration_words,
+                "max_narration_words": max_narration_words,
             }
         
         else:
@@ -165,15 +200,40 @@ def render_content_input():
                 help=tr("batch.title_prefix_help")
             )
             
-            # Number of scenes (unified for all videos)
+            # Content style for batch mode
+            batch_content_style_options = {
+                "general": tr("content_style.general"),
+                "tech_pop": tr("content_style.tech_pop"),
+            }
+            content_style = st.selectbox(
+                tr("content_style.label"),
+                options=list(batch_content_style_options.keys()),
+                format_func=lambda x: batch_content_style_options[x],
+                index=0,
+                help=tr("content_style.help"),
+            )
+
+            default_batch_n_scenes = 8 if content_style == "tech_pop" else 5
             n_scenes = st.slider(
                 tr("batch.n_scenes_label"),
                 min_value=3,
                 max_value=30,
-                value=5,
-                help=tr("batch.n_scenes_help")
+                value=default_batch_n_scenes,
+                help=tr("batch.n_scenes_help"),
+                key=f"batch_n_scenes_{content_style}",
             )
             st.caption(tr("batch.n_scenes_caption", n=n_scenes))
+
+            default_min = 25 if content_style == "tech_pop" else 5
+            default_max = 55 if content_style == "tech_pop" else 20
+            word_range = st.slider(
+                tr("content_style.word_range_label"),
+                min_value=5,
+                max_value=100,
+                value=(default_min, default_max),
+                help=tr("content_style.word_range_help"),
+            )
+            min_narration_words, max_narration_words = word_range
             
             # Config info
             st.info(f"📌 {tr('batch.config_info')}")
@@ -184,6 +244,9 @@ def render_content_input():
                 "mode": "generate",  # Fixed to AI generate content
                 "title_prefix": title_prefix,
                 "n_scenes": n_scenes,
+                "content_style": content_style,
+                "min_narration_words": min_narration_words,
+                "max_narration_words": max_narration_words,
             }
 
 

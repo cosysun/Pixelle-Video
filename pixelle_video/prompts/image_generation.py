@@ -41,7 +41,23 @@ IMAGE_STYLE_PRESETS = {
         "description": "conceptual visual metaphors, symbolic elements, thought-provoking imagery, artistic interpretation",
         "use_case": "Deep content, philosophical thinking"
     },
+
+    "tech_diagram": {
+        "name": "Tech Infographic",
+        "description": "flat infographic style, clean diagram, flowchart elements, labeled arrows with Simplified Chinese text, simple icons, educational illustration, white or light background, no photorealism, technical terms may use English abbreviations",
+        "use_case": "Computer science科普, technical concepts with real-life analogies"
+    },
 }
+
+# Policy for visible text rendered inside generated images (shared by prompt templates)
+ON_IMAGE_TEXT_POLICY = """## On-Image Text (Labels & Annotations)
+- Target audience: Chinese domestic viewers — minimize English-only labels
+- Any visible text inside the image (titles, arrow labels, step numbers, captions) MUST be in **Simplified Chinese (简体中文)**
+- Standard technical/professional terms may stay in English when widely used (e.g. DNS, API, HTTP, CPU, GPU, URL, IP, SQL)
+- Prefer mixed form for teaching: Chinese explanation + English term (e.g. label "DNS 域名解析" instead of "Domain Name Resolution")
+- In each English image prompt, **spell out the exact Chinese characters** to render (e.g. `label reading "邮件分拣中心"`, `arrow labeled "步骤一"`)
+- Keep on-image text minimal, large, and readable — at most 3-5 short labels per image
+- Do NOT use long English sentences or paragraphs as on-image text"""
 
 # Default preset
 DEFAULT_IMAGE_STYLE = "stick_figure"
@@ -70,6 +86,8 @@ Based on the existing video script, create corresponding **English** image promp
 - Use symbolic techniques to visualize abstract concepts (e.g., use paths to represent life choices, chains to represent constraints, etc.)
 - Scenes should express rich emotions and actions to enhance visual impact
 - Highlight themes through composition and element arrangement, avoid overly literal representations
+
+{on_image_text_policy}
 
 ## Key English Vocabulary Reference
 - Symbolic elements: symbolic elements
@@ -117,6 +135,45 @@ Now, please create {narrations_count} corresponding **English** image prompts fo
 """
 
 
+TECH_POP_IMAGE_PROMPT_GENERATION_PROMPT = """# Role Definition
+You are a visual designer for computer science科普 videos targeting complete beginners.
+Create **English** image prompts that visualize technical concepts through real-life analogies and simple diagrams.
+
+**Important: The input contains {narrations_count} narrations. Generate exactly {narrations_count} image prompts.**
+
+# Input Content
+{narrations_json}
+
+# Image Prompt Specifications
+- Language: **English only** (for AI image models) — but on-image labels must be Simplified Chinese (see below)
+- Style: flat infographic, simple diagram, flowchart, comparison chart, or analogy illustration
+- Length: 50-100 English words per prompt
+- Visualize the **concrete analogy** in the narration (e.g. DNS → mail sorting center, arrow labeled "DNS 域名解析", box labeled "邮件分拣中心")
+- Prefer: labeled arrows with Chinese text, simple icons, before/after comparison, step-by-step flow
+- Avoid: abstract emotional scenes, philosophical metaphors, photorealistic people, dark moody atmosphere
+
+{on_image_text_policy}
+
+# Rules
+- Each image must match its narration's specific teaching point
+- Use educational clarity over artistic ambiguity
+- If narration mentions an analogy, draw THAT analogy literally
+- No text-heavy screenshots or unreadable UI mockups
+
+# Output Format
+```json
+{{
+  "image_prompts": [
+    "[English infographic-style image prompt]",
+    "[English infographic-style image prompt]"
+  ]
+}}
+```
+
+Output exactly {narrations_count} prompts. Only output JSON.
+"""
+
+
 def build_image_prompt_prompt(
     narrations: List[str],
     min_words: int,
@@ -148,6 +205,27 @@ def build_image_prompt_prompt(
         narrations_json=narrations_json,
         narrations_count=len(narrations),
         min_words=min_words,
-        max_words=max_words
+        max_words=max_words,
+        on_image_text_policy=ON_IMAGE_TEXT_POLICY,
+    )
+
+
+def build_tech_pop_image_prompt_prompt(
+    narrations: List[str],
+    min_words: int,
+    max_words: int,
+) -> str:
+    """Build image prompt generation prompt for tech popularization content."""
+    narrations_json = json.dumps(
+        {"narrations": narrations},
+        ensure_ascii=False,
+        indent=2,
+    )
+    return TECH_POP_IMAGE_PROMPT_GENERATION_PROMPT.format(
+        narrations_json=narrations_json,
+        narrations_count=len(narrations),
+        min_words=min_words,
+        max_words=max_words,
+        on_image_text_policy=ON_IMAGE_TEXT_POLICY,
     )
 

@@ -48,6 +48,9 @@ def render_single_output(pixelle_video, video_params):
     title = video_params.get("title")
     n_scenes = video_params.get("n_scenes", 5)
     split_mode = video_params.get("split_mode", "paragraph")
+    content_style = video_params.get("content_style", "general")
+    min_narration_words = video_params.get("min_narration_words", 5)
+    max_narration_words = video_params.get("max_narration_words", 20)
     bgm_path = video_params.get("bgm_path")
     bgm_volume = video_params.get("bgm_volume", 0.2)
     
@@ -62,6 +65,20 @@ def render_single_output(pixelle_video, video_params):
     workflow_key = video_params.get("media_workflow")
     api_video_params = video_params.get("api_video_params")
     prompt_prefix = video_params.get("prompt_prefix", "")
+
+    approved_script = None
+    approved_title = title
+
+    if mode == "generate":
+        approved_script, approved_title = _render_script_preview_section(
+            pixelle_video=pixelle_video,
+            text=text,
+            title=title,
+            n_scenes=n_scenes,
+            content_style=content_style,
+            min_narration_words=min_narration_words,
+            max_narration_words=max_narration_words,
+        )
     
     with st.container(border=True):
         st.markdown(f"**{tr('section.video_generation')}**")
@@ -78,9 +95,19 @@ def render_single_output(pixelle_video, video_params):
                 st.stop()
             
             # Validate input
-            if not text:
-                st.error(tr("error.input_required"))
-                st.stop()
+            if mode == "generate" and approved_script:
+                effective_text = approved_script
+                effective_mode = "fixed"
+                effective_title = approved_title or title
+                effective_split_mode = "paragraph"
+            else:
+                if not text:
+                    st.error(tr("error.input_required"))
+                    st.stop()
+                effective_text = text
+                effective_mode = mode
+                effective_title = title
+                effective_split_mode = split_mode
 
             from pixelle_video.utils.template_util import get_template_type
             if frame_template and get_template_type(frame_template) == "video" and not workflow_key:
@@ -135,12 +162,15 @@ def render_single_output(pixelle_video, video_params):
                 
                 # Generate video (directly pass parameters)
                 # Note: media_width and media_height are auto-determined from template
-                video_params = {
-                    "text": text,
-                    "mode": mode,
-                    "title": title if title else None,
+                gen_params = {
+                    "text": effective_text,
+                    "mode": effective_mode,
+                    "title": effective_title if effective_title else None,
                     "n_scenes": n_scenes,
-                    "split_mode": split_mode,
+                    "split_mode": effective_split_mode,
+                    "content_style": content_style,
+                    "min_narration_words": min_narration_words,
+                    "max_narration_words": max_narration_words,
                     "media_workflow": workflow_key,
                     "api_video_params": api_video_params,
                     "frame_template": frame_template,
@@ -152,20 +182,20 @@ def render_single_output(pixelle_video, video_params):
                     "media_height": st.session_state.get('template_media_height'),
                 }
                 # Add TTS parameters based on mode
-                video_params["tts_inference_mode"] = tts_mode
+                gen_params["tts_inference_mode"] = tts_mode
                 if tts_mode == "local":
-                    video_params["tts_voice"] = selected_voice
-                    video_params["tts_speed"] = tts_speed
+                    gen_params["tts_voice"] = selected_voice
+                    gen_params["tts_speed"] = tts_speed
                 else:  # comfyui
-                    video_params["tts_workflow"] = tts_workflow_key
+                    gen_params["tts_workflow"] = tts_workflow_key
                     if ref_audio_path:
-                        video_params["ref_audio"] = str(ref_audio_path)
+                        gen_params["ref_audio"] = str(ref_audio_path)
                 
                 # Add custom template parameters if any
                 if custom_values_for_video:
-                    video_params["template_params"] = custom_values_for_video
+                    gen_params["template_params"] = custom_values_for_video
                 
-                result = run_async(pixelle_video.generate_video(**video_params))
+                result = run_async(pixelle_video.generate_video(**gen_params))
                 
                 # Calculate total generation time
                 total_generation_time = time.time() - start_time
@@ -222,6 +252,77 @@ def render_single_output(pixelle_video, video_params):
                 st.stop()
 
 
+def _render_script_preview_section(
+    pixelle_video,
+    text: str,
+    title: str | None,
+    n_scenes: int,
+    content_style: str,
+    min_narration_words: int,
+    max_narration_words: int,
+):
+    """
+    Render script preview/edit UI for generate mode.
+
+    Returns:
+        (approved_script, approved_title) — script text and title to use for video generation
+    """
+    with st.container(border=True):
+        st.markdown(f"**{tr('section.script_preview')}**")
+        st.caption(tr("script_preview.hint"))
+
+        if st.button(tr("btn.generate_script"), use_container_width=True, key="btn_generate_script"):
+            if not config_manager.validate():
+                st.error(tr("settings.not_configured"))
+                st.stop()
+            if not text:
+                st.error(tr("error.input_required"))
+                st.stop()
+
+            with st.spinner(tr("progress.generating_narrations")):
+                from pixelle_video.utils.content_generators import generate_script_preview
+
+                try:
+                    preview = run_async(generate_script_preview(
+                        llm_service=pixelle_video.llm,
+                        topic=text,
+                        n_scenes=n_scenes,
+                        min_words=min_narration_words,
+                        max_words=max_narration_words,
+                        content_style=content_style,
+                        title=title or None,
+                    ))
+                    st.session_state["script_preview_text"] = "\n\n".join(preview["narrations"])
+                    st.session_state["script_preview_title"] = preview["title"]
+                    st.success(tr("script_preview.generated"))
+                except Exception as e:
+                    st.error(tr("status.error", error=str(e)))
+                    logger.exception(e)
+                    st.stop()
+
+        default_script = st.session_state.get("script_preview_text", "")
+        default_preview_title = st.session_state.get("script_preview_title", title or "")
+
+        if default_script:
+            edited_script = st.text_area(
+                tr("script_preview.edit_label"),
+                value=default_script,
+                height=220,
+                help=tr("script_preview.edit_help"),
+                key="script_preview_textarea",
+            )
+            edited_title = st.text_input(
+                tr("script_preview.title_label"),
+                value=default_preview_title,
+                help=tr("input.title_help"),
+            )
+            st.session_state["script_preview_text"] = edited_script
+            st.session_state["script_preview_title"] = edited_title
+            return edited_script.strip() or None, edited_title.strip() or None
+
+    return None, title
+
+
 def render_batch_output(pixelle_video, video_params):
     """Render batch generation output (minimal, redirect to History)"""
     topics = video_params.get("topics", [])
@@ -259,6 +360,9 @@ def render_batch_output(pixelle_video, video_params):
             shared_config = {
                 "title_prefix": video_params.get("title_prefix"),
                 "n_scenes": video_params.get("n_scenes") or 5,
+                "content_style": video_params.get("content_style", "general"),
+                "min_narration_words": video_params.get("min_narration_words", 5),
+                "max_narration_words": video_params.get("max_narration_words", 20),
                 "media_workflow": video_params.get("media_workflow"),
                 "api_video_params": video_params.get("api_video_params"),
                 "frame_template": video_params.get("frame_template"),

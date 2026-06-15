@@ -9,11 +9,13 @@ try:
     from .image_dashscope import DashScopeClient
     from .image_seedream import SeedreamClient
     from .image_gpt import ImageGPT
+    from .image_gemini import GeminiImageClient
     from .image_processor import ImageProcessor
 except ImportError:
     from .image_dashscope import DashScopeClient
     from .image_seedream import SeedreamClient
     from .image_gpt import ImageGPT
+    from .image_gemini import GeminiImageClient
     from .image_processor import ImageProcessor
 
 class ImageClient:
@@ -26,10 +28,13 @@ class ImageClient:
                  local_proxy: Optional[str] = None,
                  ark_api_key: Optional[str] = None,
                  ark_base_url: Optional[str] = None,
-                 ark_local_proxy: Optional[str] = None):
+                 ark_local_proxy: Optional[str] = None,
+                 gemini_api_key: Optional[str] = None,
+                 gemini_base_url: Optional[str] = None,
+                 gemini_local_proxy: Optional[str] = None):
         """
         Unified Image Generation Client
-        Routes requests to DashScope, Seedream, or GPT based on model name.
+        Routes requests to DashScope, Seedream, Gemini, or GPT based on model name.
         """
         # Initialize DashScope Client
         self.dashscope_client = DashScopeClient(
@@ -38,18 +43,35 @@ class ImageClient:
             local_proxy=dashscope_local_proxy,
         )
 
-        # Initialize Seedream Client
-        self.seedream_client = SeedreamClient(
-            api_key=ark_api_key or Config.ARK_API_KEY,
-            base_url=ark_base_url or Config.ARK_BASE_URL,
-            local_proxy=ark_local_proxy,
+        # Initialize Seedream Client (only when ARK key is available)
+        ark_key = (ark_api_key or Config.ARK_API_KEY or os.getenv("ARK_API_KEY") or "").strip()
+        self.seedream_client = (
+            SeedreamClient(
+                api_key=ark_key,
+                base_url=ark_base_url or Config.ARK_BASE_URL,
+                local_proxy=ark_local_proxy,
+            )
+            if ark_key
+            else None
         )
 
-        # Initialize GPT Image Client
-        self.gpt_client = ImageGPT(
-            api_key=gpt_api_key or Config.OPENAI_API_KEY,
-            base_url=gpt_base_url or Config.OPENAI_BASE_URL,
-            local_proxy=local_proxy or Config.LOCAL_PROXY
+        # Initialize GPT Image Client (only when OpenAI key is available)
+        openai_api_key = (gpt_api_key or Config.OPENAI_API_KEY or os.getenv("OPENAI_API_KEY") or "").strip()
+        self.gpt_client = (
+            ImageGPT(
+                api_key=openai_api_key,
+                base_url=gpt_base_url or Config.OPENAI_BASE_URL,
+                local_proxy=local_proxy or Config.LOCAL_PROXY,
+            )
+            if openai_api_key
+            else None
+        )
+
+        # Initialize Gemini Image Client
+        self.gemini_client = GeminiImageClient(
+            api_key=gemini_api_key or Config.GEMINI_API_KEY,
+            base_url=gemini_base_url or Config.GOOGLE_GEMINI_BASE_URL,
+            local_proxy=gemini_local_proxy,
         )
 
         # Initialize Image Processor for downloads
@@ -140,8 +162,10 @@ class ImageClient:
             print("-" * 30)
             
         # Determine backend provider
-        is_seedream = "seedream" in model.lower()
-        is_sora = "sora" in model.lower() or "gpt" in model.lower()
+        model_lower = model.lower()
+        is_seedream = "seedream" in model_lower
+        is_gemini = "gemini" in model_lower
+        is_sora = "sora" in model_lower or "gpt" in model_lower
         
         # Prepare save directory
         if not save_dir:
@@ -155,6 +179,8 @@ class ImageClient:
 
         if is_seedream:
             # --- Seedream Logic ---
+            if not self.seedream_client:
+                raise RuntimeError("ARK_API_KEY is not configured")
             try:
                 logging.info(f"ImageClient requesting Seedream: {model}")
 
@@ -172,8 +198,29 @@ class ImageClient:
             except Exception as e:
                 logging.error(f"Seedream generation failed: {e}")
 
+        elif is_gemini:
+            try:
+                logging.info(f"ImageClient requesting Gemini: {model}")
+                path = self.gemini_client.generate_image(
+                    prompt=prompt,
+                    model=model,
+                    save_dir=save_dir,
+                    aspect_ratio=video_ratio,
+                    resolution=resolution,
+                    image_paths=image_paths,
+                )
+                if path and os.path.exists(path):
+                    generated_local_paths.append(path)
+                else:
+                    logging.error(f"Gemini returned invalid path: {path}")
+            except Exception as e:
+                logging.error(f"Gemini generation failed: {e}")
+                raise RuntimeError(f"Gemini generation failed: {e}") from e
+
         elif is_sora:
             # --- GPT/Sora Logic ---
+            if not self.gpt_client:
+                raise RuntimeError("OPENAI_API_KEY is not configured")
             try:
                 logging.info(f"ImageClient requesting GPT/Sora: {model}")
                 if image_paths:

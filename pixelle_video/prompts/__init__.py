@@ -20,10 +20,18 @@ Centralized prompt management for all LLM interactions.
 from pixelle_video.prompts.topic_narration import build_topic_narration_prompt
 from pixelle_video.prompts.content_narration import build_content_narration_prompt
 from pixelle_video.prompts.title_generation import build_title_generation_prompt
+from pixelle_video.prompts.tech_popularization_narration import (
+    build_tech_pop_narration_prompt,
+    build_tech_pop_outline_prompt,
+    build_tech_pop_narrations_from_outline_prompt,
+    build_tech_pop_review_prompt,
+)
+from pixelle_video.prompts.tech_pop_title_generation import build_tech_pop_title_prompt
 
 # Image prompts
 from pixelle_video.prompts.image_generation import (
     build_image_prompt_prompt,
+    build_tech_pop_image_prompt_prompt,
     IMAGE_STYLE_PRESETS,
     DEFAULT_IMAGE_STYLE
 )
@@ -35,9 +43,15 @@ __all__ = [
     "build_topic_narration_prompt",
     "build_content_narration_prompt",
     "build_title_generation_prompt",
+    "build_tech_pop_narration_prompt",
+    "build_tech_pop_outline_prompt",
+    "build_tech_pop_narrations_from_outline_prompt",
+    "build_tech_pop_review_prompt",
+    "build_tech_pop_title_prompt",
     
     # Image builders
     "build_image_prompt_prompt",
+    "build_tech_pop_image_prompt_prompt",
     "build_style_conversion_prompt",
     
     # Image style presets

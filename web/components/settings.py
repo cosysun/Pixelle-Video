@@ -300,11 +300,13 @@ def render_advanced_settings():
         dashscope_cfg = api_cfg.get("dashscope", {})
         ark_cfg = api_cfg.get("ark", {})
         kling_cfg = api_cfg.get("kling", {})
+        gemini_cfg = api_cfg.get("gemini", {})
         default_api_base_urls = {
             "openai": "https://api.openai.com/v1",
             "dashscope": "https://dashscope.aliyuncs.com/api/v1",
             "ark": "https://ark.cn-beijing.volces.com/api/v3",
             "kling": "https://api-beijing.klingai.com",
+            "gemini": "https://generativelanguage.googleapis.com",
         }
 
         with st.container(border=True):
@@ -333,9 +335,9 @@ def render_advanced_settings():
                     value=common_cfg.get("local_proxy", ""),
                     placeholder="http://127.0.0.1:9090",
                     help=(
-                        "仅部分提供商会使用，例如 OpenAI 图像模型。留空表示不使用代理。"
+                        "部分提供商会使用，例如 OpenAI、Gemini 图像模型。留空表示不使用代理。"
                         if zh
-                        else "Only used by some providers, such as OpenAI image models. Leave blank to disable."
+                        else "Used by some providers, such as OpenAI and Gemini image models. Leave blank to disable."
                     ),
                     key="api_media_local_proxy",
                 )
@@ -380,6 +382,25 @@ def render_advanced_settings():
                     value=dashscope_cfg.get("base_url") or default_api_base_urls["dashscope"],
                     placeholder="https://dashscope.aliyuncs.com/api/v1",
                     key="api_media_dashscope_base_url",
+                )
+
+                st.markdown("**Google Gemini / Nano Banana 2**")
+                api_gemini_use_proxy = st.checkbox(
+                    "Gemini 启用代理" if zh else "Use proxy for Gemini",
+                    value=bool(gemini_cfg.get("use_proxy", False)),
+                    key="api_media_gemini_use_proxy",
+                )
+                api_gemini_key = st.text_input(
+                    "Gemini API Key",
+                    value=gemini_cfg.get("api_key", ""),
+                    type="password",
+                    key="api_media_gemini_key",
+                )
+                api_gemini_base_url = st.text_input(
+                    "Gemini Base URL",
+                    value=gemini_cfg.get("base_url") or default_api_base_urls["gemini"],
+                    placeholder="https://generativelanguage.googleapis.com",
+                    key="api_media_gemini_base_url",
                 )
 
             with provider_col2:
@@ -478,6 +499,11 @@ def render_advanced_settings():
                         "access_key": api_kling_access_key or "",
                         "secret_key": api_kling_secret_key or "",
                         "use_proxy": bool(api_kling_use_proxy),
+                    })
+                    config_manager.set_api_provider_config("gemini", {
+                        "api_key": api_gemini_key or "",
+                        "base_url": api_gemini_base_url or "",
+                        "use_proxy": bool(api_gemini_use_proxy),
                     })
                     
                     # Only save to file if LLM config is valid

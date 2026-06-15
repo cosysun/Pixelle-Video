@@ -23,12 +23,40 @@ from typing import List, Optional, Literal
 
 from loguru import logger
 
+ContentStyle = Literal["general", "tech_pop"]
+
+# Default narration parameters per content style
+CONTENT_STYLE_DEFAULTS = {
+    "general": {"min_words": 5, "max_words": 20, "n_scenes": 5, "temperature": 0.8},
+    "tech_pop": {"min_words": 25, "max_words": 55, "n_scenes": 8, "temperature": 0.55},
+}
+
+TECH_POP_TITLE_MAX_LENGTH = 22
+TECH_POP_IMAGE_STYLE_PRESET = "tech_diagram"
+
+
+def resolve_content_style_params(
+    content_style: ContentStyle = "general",
+    n_scenes: Optional[int] = None,
+    min_words: Optional[int] = None,
+    max_words: Optional[int] = None,
+) -> dict:
+    """Resolve effective narration parameters for a content style."""
+    defaults = CONTENT_STYLE_DEFAULTS[content_style]
+    return {
+        "n_scenes": n_scenes if n_scenes is not None else defaults["n_scenes"],
+        "min_words": min_words if min_words is not None else defaults["min_words"],
+        "max_words": max_words if max_words is not None else defaults["max_words"],
+        "temperature": defaults["temperature"],
+    }
+
 
 async def generate_title(
     llm_service,
     content: str,
     strategy: Literal["auto", "direct", "llm"] = "auto",
-    max_length: int = 15
+    max_length: int = 15,
+    content_style: ContentStyle = "general",
 ) -> str:
     """
     Generate title from content
@@ -55,11 +83,18 @@ async def generate_title(
         # Fall through to LLM
     
     # Use LLM to generate title
-    from pixelle_video.prompts import build_title_generation_prompt
-    
-    # Pass max_length to prompt so LLM knows the character limit
-    prompt = build_title_generation_prompt(content, max_length=max_length)
-    response = await llm_service(prompt, temperature=0.7, max_tokens=50)
+    if content_style == "tech_pop":
+        from pixelle_video.prompts.tech_pop_title_generation import build_tech_pop_title_prompt
+        effective_max_length = max(max_length, TECH_POP_TITLE_MAX_LENGTH)
+        prompt = build_tech_pop_title_prompt(content, max_length=effective_max_length)
+        temperature = 0.5
+    else:
+        from pixelle_video.prompts import build_title_generation_prompt
+        effective_max_length = max_length
+        prompt = build_title_generation_prompt(content, max_length=effective_max_length)
+        temperature = 0.7
+
+    response = await llm_service(prompt, temperature=temperature, max_tokens=50)
     
     # Clean up response
     title = response.strip()
@@ -74,13 +109,13 @@ async def generate_title(
     title = title.rstrip('.,!?;:\'"')
     
     # Safety: if still over limit, truncate smartly
-    if len(title) > max_length:
+    if len(title) > effective_max_length:
         # Try to truncate at word boundary
-        truncated = title[:max_length]
+        truncated = title[:effective_max_length]
         last_space = truncated.rfind(' ')
         
         # Only use word boundary if it's not too far back (at least 60% of max_length)
-        if last_space > max_length * 0.6:
+        if last_space > effective_max_length * 0.6:
             title = truncated[:last_space]
         else:
             title = truncated
@@ -97,7 +132,9 @@ async def generate_narrations_from_topic(
     topic: str,
     n_scenes: int = 5,
     min_words: int = 5,
-    max_words: int = 20
+    max_words: int = 20,
+    content_style: ContentStyle = "general",
+    use_two_pass: bool = False,
 ) -> List[str]:
     """
     Generate narrations from topic using LLM
@@ -112,20 +149,39 @@ async def generate_narrations_from_topic(
     Returns:
         List of narration texts
     """
-    from pixelle_video.prompts import build_topic_narration_prompt
-    
-    logger.info(f"Generating {n_scenes} narrations from topic: {topic}")
-    
-    prompt = build_topic_narration_prompt(
-        topic=topic,
-        n_storyboard=n_scenes,
-        min_words=min_words,
-        max_words=max_words
-    )
+    logger.info(f"Generating {n_scenes} narrations from topic: {topic} (style={content_style})")
+
+    if content_style == "tech_pop" and use_two_pass:
+        return await generate_tech_script_two_pass(
+            llm_service=llm_service,
+            topic=topic,
+            n_scenes=n_scenes,
+            min_words=min_words,
+            max_words=max_words,
+        )
+
+    if content_style == "tech_pop":
+        from pixelle_video.prompts.tech_popularization_narration import build_tech_pop_narration_prompt
+        prompt = build_tech_pop_narration_prompt(
+            topic=topic,
+            n_storyboard=n_scenes,
+            min_words=min_words,
+            max_words=max_words,
+        )
+        temperature = CONTENT_STYLE_DEFAULTS["tech_pop"]["temperature"]
+    else:
+        from pixelle_video.prompts import build_topic_narration_prompt
+        prompt = build_topic_narration_prompt(
+            topic=topic,
+            n_storyboard=n_scenes,
+            min_words=min_words,
+            max_words=max_words,
+        )
+        temperature = CONTENT_STYLE_DEFAULTS["general"]["temperature"]
     
     response = await llm_service(
         prompt=prompt,
-        temperature=0.8,
+        temperature=temperature,
         max_tokens=2000
     )
     
@@ -134,19 +190,132 @@ async def generate_narrations_from_topic(
     # Parse JSON
     result = _parse_json(response)
     
+    narrations = _validate_narration_count(result, n_scenes)
+    
+    logger.info(f"Generated {len(narrations)} narrations successfully")
+    return narrations
+
+
+async def generate_tech_script_two_pass(
+    llm_service,
+    topic: str,
+    n_scenes: int = 8,
+    min_words: int = 25,
+    max_words: int = 55,
+    enable_review: bool = True,
+) -> List[str]:
+    """
+    Three-pass tech popularization script generation:
+    1. Outline (structure planning)
+    2. Narrations from outline
+    3. Optional review/rewrite pass
+    """
+    from pixelle_video.prompts.tech_popularization_narration import (
+        build_tech_pop_outline_prompt,
+        build_tech_pop_narrations_from_outline_prompt,
+        build_tech_pop_review_prompt,
+    )
+
+    temperature = CONTENT_STYLE_DEFAULTS["tech_pop"]["temperature"]
+    logger.info(f"Tech two-pass generation: topic={topic[:50]}..., scenes={n_scenes}")
+
+    outline_prompt = build_tech_pop_outline_prompt(topic=topic, n_storyboard=n_scenes)
+    outline_response = await llm_service(
+        prompt=outline_prompt,
+        temperature=temperature,
+        max_tokens=2000,
+    )
+    outline_result = _parse_json(outline_response)
+    scenes = outline_result.get("scenes", [])
+    if len(scenes) < n_scenes:
+        logger.warning(f"Outline has {len(scenes)} scenes, expected {n_scenes}")
+    if not scenes:
+        raise ValueError("Invalid outline response: missing 'scenes'")
+
+    narrations_prompt = build_tech_pop_narrations_from_outline_prompt(
+        topic=topic,
+        outline=scenes[:n_scenes],
+        n_storyboard=n_scenes,
+        min_words=min_words,
+        max_words=max_words,
+    )
+    narrations_response = await llm_service(
+        prompt=narrations_prompt,
+        temperature=temperature,
+        max_tokens=3000,
+    )
+    narrations_result = _parse_json(narrations_response)
+    narrations = _validate_narration_count(narrations_result, n_scenes)
+
+    if enable_review:
+        review_prompt = build_tech_pop_review_prompt(
+            topic=topic,
+            narrations=narrations,
+            n_storyboard=n_scenes,
+            min_words=min_words,
+            max_words=max_words,
+        )
+        review_response = await llm_service(
+            prompt=review_prompt,
+            temperature=0.4,
+            max_tokens=3000,
+        )
+        review_result = _parse_json(review_response)
+        narrations = _validate_narration_count(review_result, n_scenes)
+
+    logger.info(f"Tech two-pass generation completed: {len(narrations)} narrations")
+    return narrations
+
+
+async def generate_script_preview(
+    llm_service,
+    topic: str,
+    n_scenes: int = 5,
+    min_words: int = 5,
+    max_words: int = 20,
+    content_style: ContentStyle = "general",
+    title: Optional[str] = None,
+) -> dict:
+    """
+    Generate narrations and title for preview/edit before video generation.
+
+    Returns:
+        {"narrations": [...], "title": "..."}
+    """
+    narrations = await generate_narrations_from_topic(
+        llm_service=llm_service,
+        topic=topic,
+        n_scenes=n_scenes,
+        min_words=min_words,
+        max_words=max_words,
+        content_style=content_style,
+    )
+
+    if title:
+        generated_title = title
+    else:
+        title_content = topic if content_style == "general" else "\n".join(narrations)
+        generated_title = await generate_title(
+            llm_service=llm_service,
+            content=title_content,
+            strategy="llm" if content_style == "tech_pop" else "auto",
+            content_style=content_style,
+        )
+
+    return {"narrations": narrations, "title": generated_title}
+
+
+def _validate_narration_count(result: dict, n_scenes: int) -> List[str]:
+    """Validate and normalize narration count from LLM JSON response."""
     if "narrations" not in result:
         raise ValueError("Invalid response format: missing 'narrations' key")
-    
+
     narrations = result["narrations"]
-    
-    # Validate count
     if len(narrations) > n_scenes:
         logger.warning(f"Got {len(narrations)} narrations, taking first {n_scenes}")
         narrations = narrations[:n_scenes]
     elif len(narrations) < n_scenes:
         raise ValueError(f"Expected {n_scenes} narrations, got only {len(narrations)}")
-    
-    logger.info(f"Generated {len(narrations)} narrations successfully")
     return narrations
 
 
@@ -273,7 +442,8 @@ async def generate_image_prompts(
     max_words: int = 60,
     batch_size: int = 10,
     max_retries: int = 3,
-    progress_callback: Optional[callable] = None
+    progress_callback: Optional[callable] = None,
+    content_style: ContentStyle = "general",
 ) -> List[str]:
     """
     Generate image prompts from narrations (with batching and retry)
@@ -291,8 +461,12 @@ async def generate_image_prompts(
         List of image prompts (base prompts, without prefix applied)
     """
     from pixelle_video.prompts import build_image_prompt_prompt
+    from pixelle_video.prompts.image_generation import build_tech_pop_image_prompt_prompt
     
-    logger.info(f"Generating image prompts for {len(narrations)} narrations (batch_size={batch_size})")
+    logger.info(
+        f"Generating image prompts for {len(narrations)} narrations "
+        f"(batch_size={batch_size}, style={content_style})"
+    )
     
     # Split narrations into batches
     batches = [narrations[i:i + batch_size] for i in range(0, len(narrations), batch_size)]
@@ -308,11 +482,18 @@ async def generate_image_prompts(
         for attempt in range(1, max_retries + 1):
             try:
                 # Generate prompts for this batch
-                prompt = build_image_prompt_prompt(
-                    narrations=batch_narrations,
-                    min_words=min_words,
-                    max_words=max_words
-                )
+                if content_style == "tech_pop":
+                    prompt = build_tech_pop_image_prompt_prompt(
+                        narrations=batch_narrations,
+                        min_words=min_words,
+                        max_words=max_words,
+                    )
+                else:
+                    prompt = build_image_prompt_prompt(
+                        narrations=batch_narrations,
+                        min_words=min_words,
+                        max_words=max_words,
+                    )
                 
                 response = await llm_service(
                     prompt=prompt,
@@ -490,7 +671,7 @@ def _parse_json(text: str) -> dict:
             pass
     
     # Try to find any JSON object in the text
-    json_pattern = r'\{[^{}]*(?:"narrations"|"image_prompts")\s*:\s*\[[^\]]*\][^{}]*\}'
+    json_pattern = r'\{[^{}]*(?:"narrations"|"image_prompts"|"scenes"|"video_prompts")\s*:\s*\[[^\]]*\][^{}]*\}'
     match = re.search(json_pattern, text, re.DOTALL)
     if match:
         try:

@@ -40,7 +40,10 @@ from pixelle_video.utils.content_generators import (
     generate_narrations_from_topic,
     split_narration_script,
     generate_image_prompts,
+    resolve_content_style_params,
+    TECH_POP_IMAGE_STYLE_PRESET,
 )
+from pixelle_video.prompts.image_generation import IMAGE_STYLE_PRESETS
 from pixelle_video.utils.os_util import (
     create_task_output_dir,
     get_task_final_video_path
@@ -107,9 +110,19 @@ class StandardPipeline(LinearVideoPipeline):
         """Step 2: Generate or process script/narrations."""
         mode = ctx.params.get("mode", "generate")
         text = ctx.input_text
-        n_scenes = ctx.params.get("n_scenes", 5)
-        min_words = ctx.params.get("min_narration_words", 5)
-        max_words = ctx.params.get("max_narration_words", 20)
+        content_style = ctx.params.get("content_style", "general")
+        style_params = resolve_content_style_params(
+            content_style=content_style,
+            n_scenes=ctx.params.get("n_scenes"),
+            min_words=ctx.params.get("min_narration_words"),
+            max_words=ctx.params.get("max_narration_words"),
+        )
+        n_scenes = style_params["n_scenes"]
+        min_words = style_params["min_words"]
+        max_words = style_params["max_words"]
+        ctx.params["n_scenes"] = n_scenes
+        ctx.params["min_narration_words"] = min_words
+        ctx.params["max_narration_words"] = max_words
         
         if mode == "generate":
             self._report_progress(ctx.progress_callback, "generating_narrations", 0.05)
@@ -118,9 +131,10 @@ class StandardPipeline(LinearVideoPipeline):
                 topic=text,
                 n_scenes=n_scenes,
                 min_words=min_words,
-                max_words=max_words
+                max_words=max_words,
+                content_style=content_style,
             )
-            logger.info(f"✅ Generated {len(ctx.narrations)} narrations")
+            logger.info(f"✅ Generated {len(ctx.narrations)} narrations (style={content_style})")
         else:  # fixed
             self._report_progress(ctx.progress_callback, "splitting_script", 0.05)
             split_mode = ctx.params.get("split_mode", "paragraph")
@@ -138,6 +152,7 @@ class StandardPipeline(LinearVideoPipeline):
         title = ctx.params.get("title")
         mode = ctx.params.get("mode", "generate")
         text = ctx.input_text
+        content_style = ctx.params.get("content_style", "general")
         
         if title:
             ctx.title = title
@@ -145,10 +160,26 @@ class StandardPipeline(LinearVideoPipeline):
         else:
             self._report_progress(ctx.progress_callback, "generating_title", 0.01)
             if mode == "generate":
-                ctx.title = await generate_title(self.llm, text, strategy="auto")
-                logger.info(f"   Title: '{ctx.title}' (auto-generated)")
+                if content_style == "tech_pop" and ctx.narrations:
+                    title_source = "\n".join(ctx.narrations)
+                    strategy = "llm"
+                else:
+                    title_source = text
+                    strategy = "auto"
+                ctx.title = await generate_title(
+                    self.llm,
+                    title_source,
+                    strategy=strategy,
+                    content_style=content_style,
+                )
+                logger.info(f"   Title: '{ctx.title}' (auto-generated, style={content_style})")
             else:  # fixed
-                ctx.title = await generate_title(self.llm, text, strategy="llm")
+                ctx.title = await generate_title(
+                    self.llm,
+                    text,
+                    strategy="llm",
+                    content_style=content_style,
+                )
                 logger.info(f"   Title: '{ctx.title}' (LLM-generated)")
 
     async def plan_visuals(self, ctx: PipelineContext):
@@ -172,7 +203,12 @@ class StandardPipeline(LinearVideoPipeline):
         if template_requires_media:
             self._report_progress(ctx.progress_callback, "generating_image_prompts", 0.15)
             
+            content_style = ctx.params.get("content_style", "general")
             prompt_prefix = ctx.params.get("prompt_prefix")
+            if prompt_prefix is None and content_style == "tech_pop":
+                tech_preset = IMAGE_STYLE_PRESETS.get(TECH_POP_IMAGE_STYLE_PRESET, {})
+                prompt_prefix = tech_preset.get("description", "")
+                logger.info(f"Using tech_pop image style preset: {TECH_POP_IMAGE_STYLE_PRESET}")
             min_words = ctx.params.get("min_image_prompt_words", 30)
             max_words = ctx.params.get("max_image_prompt_words", 60)
             
@@ -202,7 +238,8 @@ class StandardPipeline(LinearVideoPipeline):
                     narrations=ctx.narrations,
                     min_words=min_words,
                     max_words=max_words,
-                    progress_callback=image_prompt_progress
+                    progress_callback=image_prompt_progress,
+                    content_style=content_style,
                 )
                 
                 # Apply prompt prefix

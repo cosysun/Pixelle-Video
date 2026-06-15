@@ -55,7 +55,7 @@ class SeedreamClient:
             base_url: ARK API 基础 URL
             timeout: HTTP请求超时时间（秒）
         """
-        self.api_key = api_key or os.getenv("ARK_API_KEY")
+        self.api_key = (api_key or os.getenv("ARK_API_KEY") or "").strip()
         self.base_url = base_url or "https://ark.cn-beijing.volces.com/api/v3"
         self.local_proxy = local_proxy
         self.timeout = timeout
@@ -64,6 +64,8 @@ class SeedreamClient:
             logging.warning(
                 "SeedreamClient missing api_key. Set ARK_API_KEY."
             )
+            self.client = None
+            return
 
         client_kwargs = {
             "base_url": self.base_url,
@@ -98,7 +100,7 @@ class SeedreamClient:
         Returns:
             生成的图片路径列表
         """
-        if not self.api_key:
+        if not self.api_key or not self.client:
             raise RuntimeError("ARK_API_KEY not set.")
 
         # 规范化模型名称（旧名称 -> 新名称）

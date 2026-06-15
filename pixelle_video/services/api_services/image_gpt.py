@@ -28,10 +28,12 @@ class ImageGPT:
         :param base_url: 自定义 Base URL（如果传入，则不使用本地代理）
         :param timeout: 超时时间
         """
-        self.api_key = api_key or os.getenv("OPENAI_API_KEY")
+        self.api_key = (api_key or os.getenv("OPENAI_API_KEY") or "").strip()
         self.timeout = timeout
         
-        kwargs = {"api_key": self.api_key, "timeout": self.timeout}
+        kwargs = {"timeout": self.timeout}
+        if self.api_key:
+            kwargs["api_key"] = self.api_key
         
         self.base_url = base_url
         if local_proxy:
@@ -42,7 +44,7 @@ class ImageGPT:
         if self.base_url:
             kwargs["base_url"] = self.base_url
             
-        self.client = OpenAI(**kwargs)
+        self.client = OpenAI(**kwargs) if self.api_key else None
         self.max_attempts = 10
         self.image_processor = ImageProcessor(local_proxy=local_proxy)
 
@@ -74,6 +76,9 @@ class ImageGPT:
             save_dir: 保存目录（不传则返回 URL 或 base64）
             image_urls: 参考图片 URL 列表（仅 gpt-image-2 支持）
         """
+
+        if not self.client:
+            raise RuntimeError("OPENAI_API_KEY is not configured")
 
         attempts = 0
         last_error = None

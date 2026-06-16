@@ -69,11 +69,44 @@ class FrameProcessor:
             Processed frame with all paths filled
         """
         logger.info(f"Processing frame {frame.index}...")
-        
+
         frame_num = frame.index + 1
-        
+
+        # Resolve subtitle-chunk reference: child frames share their parent's
+        # image instead of regenerating it. The parent must already have been
+        # processed (image_path or video_path populated) - otherwise frame
+        # ordering was broken upstream and we fail loudly.
+        if frame.image_source_index is not None:
+            try:
+                src = storyboard.frames[frame.image_source_index]
+            except IndexError:
+                raise RuntimeError(
+                    f"Frame {frame.index} has image_source_index="
+                    f"{frame.image_source_index}, but storyboard only has "
+                    f"{len(storyboard.frames)} frame(s). The chunk-expansion "
+                    f"step likely produced a stale pointer."
+                )
+            if src.image_path is None and src.video_path is None:
+                raise RuntimeError(
+                    f"Frame {frame.index} references frame "
+                    f"{frame.image_source_index} as its image_source_index, "
+                    f"but that source frame has no media generated yet. "
+                    f"Frames must be processed in index order so that parents "
+                    f"finish before subtitle-chunk children start."
+                )
+            frame.image_path = src.image_path
+            frame.video_path = src.video_path
+            frame.media_type = src.media_type
+            logger.debug(
+                f"  Frame {frame.index} reuses media from parent frame "
+                f"{frame.image_source_index} ({frame.media_type}): "
+                f"{frame.image_path or frame.video_path}"
+            )
+
         # Determine if this frame needs image generation
-        # If image_path or video_path is already set (e.g. asset-based pipeline), we consider it "has existing media" but skip generation
+        # If image_path or video_path is already set (e.g. asset-based pipeline,
+        # or subtitle-chunk reuse above), we consider it "has existing media"
+        # but skip generation
         has_existing_media = frame.image_path is not None or frame.video_path is not None
         needs_generation = frame.image_prompt is not None
         

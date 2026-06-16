@@ -69,7 +69,15 @@ class StoryboardFrame:
     video_path: Optional[str] = None           # Original video path (for video type, before composition)
     composed_image_path: Optional[str] = None  # Composed image path (with subtitles, for image type)
     video_segment_path: Optional[str] = None   # Final video segment path
-    
+
+    # Subtitle-chunk linkage:
+    # When a long narration is split into multiple frames sharing one image,
+    # children point at the parent's index here. The FrameProcessor copies
+    # image_path / video_path / media_type from the source frame instead of
+    # regenerating media. None on parent frames and on frames that don't
+    # participate in chunking (the common case).
+    image_source_index: Optional[int] = None
+
     # Metadata
     duration: float = 0.0                      # Frame duration (seconds, from audio or video)
     created_at: Optional[datetime] = None

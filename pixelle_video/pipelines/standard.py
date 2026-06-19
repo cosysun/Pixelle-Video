@@ -82,29 +82,85 @@ class StandardPipeline(LinearVideoPipeline):
         """Step 1: Setup task directory and environment."""
         text = ctx.input_text
         mode = ctx.params.get("mode", "generate")
-        
-        logger.info(f"🚀 Starting StandardPipeline in '{mode}' mode")
-        logger.info(f"   Text length: {len(text)} chars")
-        
-        # Create isolated task directory
-        task_dir, task_id = create_task_output_dir()
+
+        # Resume: reuse the existing task directory + ID. Both
+        # ``create_task_output_dir`` and the History page key off this ID, so
+        # it's the only thing we need to thread through to keep the previous
+        # run's per-frame artifacts findable.
+        if ctx.resume_task_id:
+            logger.info(
+                f"♻️  Resuming StandardPipeline task {ctx.resume_task_id} "
+                f"(mode={mode!r})"
+            )
+            task_dir, task_id = create_task_output_dir(task_id=ctx.resume_task_id)
+        else:
+            logger.info(f"🚀 Starting StandardPipeline in '{mode}' mode")
+            logger.info(f"   Text length: {len(text)} chars")
+
+            # Create isolated task directory
+            task_dir, task_id = create_task_output_dir()
+
         ctx.task_id = task_id
         ctx.task_dir = task_dir
-        
-        logger.info(f"📁 Task directory created: {task_dir}")
+
+        logger.info(f"📁 Task directory: {task_dir}")
         logger.info(f"   Task ID: {task_id}")
-        
+
         # Determine final video path
         output_path = ctx.params.get("output_path")
         if output_path is None:
             ctx.final_video_path = get_task_final_video_path(task_id)
         else:
             # We will copy to this path in finalize/post_production
-            # For internal processing, we still use the task dir path? 
+            # For internal processing, we still use the task dir path?
             # Actually StandardPipeline logic used get_task_final_video_path as the target for concat
             # and then copied. Let's stick to that.
             ctx.final_video_path = get_task_final_video_path(task_id)
             logger.info(f"   Will copy final video to: {output_path}")
+
+    async def load_resume_state(self, ctx: PipelineContext):
+        """
+        Resume hook: load the previously-persisted storyboard and skip the
+        content/visual planning phases.
+
+        On resume, the persisted ``storyboard.json`` is the source of truth
+        for narrations, image prompts, and per-frame progress. We rebuild
+        ``ctx.config`` and ``ctx.title`` from it so the rest of the pipeline
+        continues to work as if the planning phases had just run.
+        """
+        if not getattr(self.core, "persistence", None):
+            logger.warning(
+                "Resume requested but no persistence service available; "
+                "falling through to fresh content generation"
+            )
+            return
+
+        storyboard = await self.core.persistence.load_storyboard(ctx.task_id)
+        if not storyboard:
+            logger.warning(
+                f"Resume requested for task {ctx.task_id} but no storyboard "
+                f"on disk; falling through to fresh content generation"
+            )
+            return
+
+        ctx.storyboard = storyboard
+        ctx.config = storyboard.config
+        ctx.title = storyboard.title
+        ctx.narrations = [f.narration for f in storyboard.frames]
+        ctx.image_prompts = [f.image_prompt for f in storyboard.frames]
+
+        # Reset total_duration; produce_assets recomputes it as a sum across
+        # frames so resume + skip_already_done doesn't double-count.
+        storyboard.total_duration = 0.0
+
+        n_done = sum(1 for f in storyboard.frames if f.video_segment_path)
+        n_total = len(storyboard.frames)
+        logger.info(
+            f"♻️  Resuming task {ctx.task_id}: {n_done}/{n_total} frames "
+            f"already complete, {n_total - n_done} remaining"
+        )
+
+        ctx.skip_content_generation = True
 
     async def generate_content(self, ctx: PipelineContext):
         """Step 2: Generate or process script/narrations."""
@@ -332,30 +388,46 @@ class StandardPipeline(LinearVideoPipeline):
         """Step 6: Generate audio, images, and render frames (Core processing)."""
         storyboard = ctx.storyboard
         config = ctx.config
-        
+
+        # Reset total_duration to 0; we recompute it as a sum at the end of
+        # the loop so resume + per-frame skip don't double-count.
+        storyboard.total_duration = 0.0
+
+        # Cheap checkpoint helper: save storyboard.json after each frame so
+        # any failure mid-task leaves a resumable trail. Tolerates missing
+        # persistence service.
+        async def _checkpoint_storyboard():
+            persistence = getattr(self.core, "persistence", None)
+            if persistence and ctx.task_id:
+                try:
+                    await persistence.save_storyboard(ctx.task_id, storyboard)
+                except Exception as e:  # noqa: BLE001
+                    logger.warning(f"Storyboard checkpoint failed: {e}")
+
         # Check if using RunningHub workflows for parallel processing
         is_runninghub = (
             (config.tts_workflow and config.tts_workflow.startswith("runninghub/")) or
             (config.media_workflow and config.media_workflow.startswith("runninghub/"))
         )
-        
+
         # Get concurrent limit from config_manager (supports hot reload without restart)
         from pixelle_video.config import config_manager
         runninghub_concurrent_limit = config_manager.config.comfyui.runninghub_concurrent_limit or 1
-        
+
         if is_runninghub and runninghub_concurrent_limit > 1:
             logger.info(f"🚀 Using parallel processing for RunningHub workflows (max {runninghub_concurrent_limit} concurrent)")
-            
+
             semaphore = asyncio.Semaphore(runninghub_concurrent_limit)
             completed_count = 0
-            
+            checkpoint_lock = asyncio.Lock()
+
             async def process_frame_with_semaphore(i: int, frame: StoryboardFrame):
                 nonlocal completed_count
                 async with semaphore:
                     base_progress = 0.2
                     frame_range = 0.6
                     per_frame_progress = frame_range / len(storyboard.frames)
-                    
+
                     # Create frame-specific progress callback
                     def frame_progress_callback(event: ProgressEvent):
                         overall_progress = base_progress + (per_frame_progress * completed_count) + (per_frame_progress * event.progress)
@@ -369,7 +441,7 @@ class StandardPipeline(LinearVideoPipeline):
                                 action=event.action
                             )
                             ctx.progress_callback(adjusted_event)
-                    
+
                     # Report frame start
                     self._report_progress(
                         ctx.progress_callback,
@@ -378,7 +450,7 @@ class StandardPipeline(LinearVideoPipeline):
                         frame_current=i+1,
                         frame_total=len(storyboard.frames)
                     )
-                    
+
                     processed_frame = await self.core.frame_processor(
                         frame=frame,
                         storyboard=storyboard,
@@ -386,30 +458,31 @@ class StandardPipeline(LinearVideoPipeline):
                         total_frames=len(storyboard.frames),
                         progress_callback=frame_progress_callback
                     )
-                    
+
                     completed_count += 1
                     logger.info(f"✅ Frame {i+1} completed ({processed_frame.duration:.2f}s) [{completed_count}/{len(storyboard.frames)}]")
+                    # Checkpoint under lock so concurrent writers don't
+                    # interleave their JSON dumps.
+                    async with checkpoint_lock:
+                        await _checkpoint_storyboard()
                     return i, processed_frame
-            
+
             # Create all tasks and execute in parallel
             tasks = [process_frame_with_semaphore(i, frame) for i, frame in enumerate(storyboard.frames)]
             results = await asyncio.gather(*tasks)
-            
-            # Update frames in order and calculate total duration
+
+            # Update frames in order
             for idx, processed_frame in sorted(results, key=lambda x: x[0]):
                 storyboard.frames[idx] = processed_frame
-                storyboard.total_duration += processed_frame.duration
-            
-            logger.info(f"✅ All frames processed in parallel (total duration: {storyboard.total_duration:.2f}s)")
         else:
             # Serial processing for non-RunningHub workflows
             logger.info("⚙️ Using serial processing (non-RunningHub workflow)")
-            
+
             for i, frame in enumerate(storyboard.frames):
                 base_progress = 0.2
                 frame_range = 0.6
                 per_frame_progress = frame_range / len(storyboard.frames)
-                
+
                 # Create frame-specific progress callback
                 def frame_progress_callback(event: ProgressEvent):
                     overall_progress = base_progress + (per_frame_progress * i) + (per_frame_progress * event.progress)
@@ -423,7 +496,7 @@ class StandardPipeline(LinearVideoPipeline):
                             action=event.action
                         )
                         ctx.progress_callback(adjusted_event)
-                
+
                 # Report frame start
                 self._report_progress(
                     ctx.progress_callback,
@@ -432,7 +505,7 @@ class StandardPipeline(LinearVideoPipeline):
                     frame_current=i+1,
                     frame_total=len(storyboard.frames)
                 )
-                
+
                 processed_frame = await self.core.frame_processor(
                     frame=frame,
                     storyboard=storyboard,
@@ -440,8 +513,18 @@ class StandardPipeline(LinearVideoPipeline):
                     total_frames=len(storyboard.frames),
                     progress_callback=frame_progress_callback
                 )
-                storyboard.total_duration += processed_frame.duration
                 logger.info(f"✅ Frame {i+1} completed ({processed_frame.duration:.2f}s)")
+                await _checkpoint_storyboard()
+
+        # Recompute total_duration as a sum across frames. This is robust to
+        # resume (where some frames are early-returned by FrameProcessor and
+        # we don't want their duration counted twice) and matches the
+        # canonical definition of "total" used by Storyboard.is_completed.
+        storyboard.total_duration = sum(f.duration for f in storyboard.frames)
+        logger.info(
+            f"✅ produce_assets done: {len(storyboard.frames)} frames, "
+            f"total duration {storyboard.total_duration:.2f}s"
+        )
 
     async def post_production(self, ctx: PipelineContext):
         """Step 7: Concatenate videos and add BGM."""

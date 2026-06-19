@@ -42,6 +42,17 @@ def render_output_preview(pixelle_video, video_params):
 
 def render_single_output(pixelle_video, video_params):
     """Render single video generation output (original logic, unchanged)"""
+    # Resume support: each Home-page tab has its OWN session-state key so it
+    # can't accidentally consume another tab's resume hint. The Standard
+    # pipeline UI registers itself as ``quick_create`` (see
+    # ``web/pipelines/standard.py``); that's the suffix the History page
+    # writes when the user clicks 🔄 on a failed standard-pipeline task.
+    pipeline_name = video_params.get("pipeline", "quick_create")
+    resume_state_key = f"resume_task_id_{pipeline_name}"
+    resume_task_id = st.session_state.pop(resume_state_key, None)
+    if resume_task_id:
+        st.info(tr("history.resume_banner", task_id=resume_task_id))
+
     # Extract parameters from video_params dict
     text = video_params.get("text", "")
     mode = video_params.get("mode", "generate")
@@ -180,7 +191,17 @@ def render_single_output(pixelle_video, video_params):
                     "progress_callback": update_progress,
                     "media_width": st.session_state.get('template_media_width'),
                     "media_height": st.session_state.get('template_media_height'),
+                    # Stamp the source page so the History card's Resume
+                    # button can route back here. All Standard/Asset-based
+                    # pipelines live under the Home page tabs.
+                    "source_page": "1_🎬_Home",
+                    # UI-side pipeline name; the History page uses this to
+                    # write a per-pipeline resume key when 🔄 is clicked.
+                    "source_pipeline": pipeline_name,
                 }
+                # Pipe resume hint through to the core pipeline.
+                if resume_task_id:
+                    gen_params["resume_task_id"] = resume_task_id
                 # Add TTS parameters based on mode
                 gen_params["tts_inference_mode"] = tts_mode
                 if tts_mode == "local":

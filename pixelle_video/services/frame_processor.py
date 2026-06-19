@@ -22,11 +22,14 @@ Key Feature:
 
 from typing import Callable, Optional
 
+import os
+
 import httpx
 from loguru import logger
 
 from pixelle_video.models.progress import ProgressEvent
 from pixelle_video.models.storyboard import Storyboard, StoryboardFrame, StoryboardConfig
+from pixelle_video.utils.retry import with_retry
 
 
 class FrameProcessor:
@@ -72,6 +75,26 @@ class FrameProcessor:
 
         frame_num = frame.index + 1
 
+        # Resume short-circuit: if this frame already produced a video segment
+        # on a previous run AND the file is still on disk, treat it as done
+        # and skip all four steps. This is what makes resume cheap — we only
+        # re-process frames the previous run didn't finish.
+        if frame.video_segment_path and os.path.exists(frame.video_segment_path):
+            logger.info(
+                f"⏭️  Frame {frame.index} already completed "
+                f"(segment exists at {frame.video_segment_path}), skipping"
+            )
+            if progress_callback:
+                progress_callback(ProgressEvent(
+                    event_type="frame_step",
+                    progress=1.0,
+                    frame_current=frame_num,
+                    frame_total=total_frames,
+                    step=4,
+                    action="skip",
+                ))
+            return frame
+
         # Resolve subtitle-chunk reference: child frames share their parent's
         # image instead of regenerating it. The parent must already have been
         # processed (image_path or video_path populated) - otherwise frame
@@ -105,13 +128,18 @@ class FrameProcessor:
 
         # Determine if this frame needs image generation
         # If image_path or video_path is already set (e.g. asset-based pipeline,
-        # or subtitle-chunk reuse above), we consider it "has existing media"
-        # but skip generation
+        # subtitle-chunk reuse above, OR a previous run that we're now
+        # resuming), we consider it "has existing media" and skip generation
+        # even if image_prompt is set. This is what makes resume cheap for
+        # frames that failed AFTER media generation.
         has_existing_media = frame.image_path is not None or frame.video_path is not None
-        needs_generation = frame.image_prompt is not None
-        
+        needs_generation = frame.image_prompt is not None and not has_existing_media
+
         try:
             # Step 1: Generate audio (TTS)
+            # Skip if audio_path is set (asset-based, ref-audio, OR resumed).
+            # Existing behavior: path-based check is sufficient since we only
+            # set audio_path in two places (here, and asset_based init).
             if not frame.audio_path:
                 if progress_callback:
                     progress_callback(ProgressEvent(
@@ -218,8 +246,11 @@ class FrameProcessor:
             if config.ref_audio:
                 tts_params["ref_audio"] = config.ref_audio
         
-        audio_path = await self.core.tts(**tts_params)
-        
+        audio_path = await with_retry(
+            lambda: self.core.tts(**tts_params),
+            label=f"tts(frame={frame.index})",
+        )
+
         frame.audio_path = audio_path
         
         # Get audio duration
@@ -271,8 +302,11 @@ class FrameProcessor:
             media_params["duration"] = frame.duration
             logger.info(f"  → Generating video with target duration: {frame.duration:.2f}s (from TTS audio)")
         
-        # Call Media generation
-        media_result = await self.core.media(**media_params)
+        # Call Media generation (with retry for transient provider/network errors)
+        media_result = await with_retry(
+            lambda: self.core.media(**media_params),
+            label=f"media(frame={frame.index},type={media_type})",
+        )
         
         # Store media type
         frame.media_type = media_result.media_type
@@ -331,14 +365,17 @@ class FrameProcessor:
 
         first_frame_path = get_task_frame_path(config.task_id, frame.index, "image")
         logger.info(f"  → Generating API video first frame via {first_frame_workflow}")
-        image_result = await self.core.media(
-            prompt=frame.image_prompt,
-            workflow=first_frame_workflow,
-            media_type="image",
-            width=config.media_width,
-            height=config.media_height,
-            output_path=first_frame_path,
-            index=frame.index + 1,
+        image_result = await with_retry(
+            lambda: self.core.media(
+                prompt=frame.image_prompt,
+                workflow=first_frame_workflow,
+                media_type="image",
+                width=config.media_width,
+                height=config.media_height,
+                output_path=first_frame_path,
+                index=frame.index + 1,
+            ),
+            label=f"first-frame(frame={frame.index})",
         )
         frame.image_path = await self._download_media(
             image_result.url,
@@ -354,8 +391,15 @@ class FrameProcessor:
         config: StoryboardConfig
     ):
         """Step 3: Compose frame with subtitle using HTML template"""
+        # Resume skip: composed image already on disk from a previous run.
+        if frame.composed_image_path and os.path.exists(frame.composed_image_path):
+            logger.debug(
+                f"  3/4: Using existing composed frame: {frame.composed_image_path}"
+            )
+            return
+
         logger.debug(f"  3/4: Composing frame {frame.index}...")
-        
+
         # Generate output path using task_id
         from pixelle_video.utils.os_util import get_task_frame_path
         output_path = get_task_frame_path(config.task_id, frame.index, "composed")
@@ -454,7 +498,6 @@ class FrameProcessor:
             )
             
             # Clean up temp file
-            import os
             if os.path.exists(temp_video_with_overlay):
                 os.unlink(temp_video_with_overlay)
         
@@ -488,7 +531,6 @@ class FrameProcessor:
         except Exception as e:
             logger.warning(f"Failed to get audio duration: {e}, using estimate")
             # Fallback: estimate based on file size (very rough)
-            import os
             file_size = os.path.getsize(audio_path)
             # Assume ~16kbps for MP3, so 2KB per second
             estimated_duration = file_size / 2000
@@ -502,7 +544,6 @@ class FrameProcessor:
         media_type: str
     ) -> str:
         """Download media (image or video) from URL to local file"""
-        import os
         from pixelle_video.utils.os_util import get_task_frame_path
         output_path = get_task_frame_path(task_id, frame_index, media_type)
 
@@ -514,15 +555,23 @@ class FrameProcessor:
 
         if os.path.exists(url):
             return url
-        
+
         timeout = httpx.Timeout(connect=10.0, read=60, write=60, pool=60)
-        async with httpx.AsyncClient(timeout=timeout) as client:
-            response = await client.get(url)
-            response.raise_for_status()
-            
-            with open(output_path, 'wb') as f:
-                f.write(response.content)
-        
+
+        async def _download_once() -> None:
+            async with httpx.AsyncClient(timeout=timeout) as client:
+                response = await client.get(url)
+                response.raise_for_status()
+
+                with open(output_path, 'wb') as f:
+                    f.write(response.content)
+
+        # Retry transient HTTP errors (provider hiccups, 5xx, timeouts).
+        await with_retry(
+            _download_once,
+            label=f"download({media_type},frame={frame_index})",
+        )
+
         return output_path
     
     async def _get_video_duration(self, video_path: str) -> float:

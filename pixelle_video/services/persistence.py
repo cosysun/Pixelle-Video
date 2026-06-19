@@ -17,12 +17,44 @@ Handles task metadata and storyboard persistence to filesystem.
 """
 
 import json
+import os
 from pathlib import Path
 from typing import List, Optional, Dict, Any
 from datetime import datetime
 from loguru import logger
 
 from pixelle_video.models.storyboard import Storyboard, StoryboardFrame, StoryboardConfig, ContentMetadata
+
+
+def _atomic_write_json(path: Path, data: Dict[str, Any]) -> None:
+    """
+    Write ``data`` as JSON to ``path`` atomically.
+
+    Writes first to ``<path>.tmp`` in the same directory, then ``os.replace``s
+    it onto ``path``. ``os.replace`` is atomic on POSIX and Windows (single
+    filesystem), so a crash mid-write leaves either the old contents or the
+    new contents — never a half-written file. This matters because the per-
+    frame checkpointing introduced by the resume feature now writes
+    storyboard.json after every frame, multiplying the corruption window of
+    the prior truncate-then-write pattern.
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = path.with_suffix(path.suffix + ".tmp")
+    try:
+        with open(tmp_path, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2, ensure_ascii=False)
+            # Flush to OS buffers; fsync would be stronger but adds noticeable
+            # latency for per-frame checkpoints. flush() is enough to make a
+            # racing reader see a consistent file via os.replace.
+            f.flush()
+        os.replace(tmp_path, path)
+    except Exception:
+        # Best-effort cleanup of the tmp file so it doesn't accumulate.
+        try:
+            tmp_path.unlink(missing_ok=True)
+        except Exception:  # noqa: BLE001
+            pass
+        raise
 
 
 class PersistenceService:
@@ -122,10 +154,9 @@ class PersistenceService:
                 metadata["created_at"] = metadata["created_at"].isoformat()
             if "completed_at" in metadata and isinstance(metadata["completed_at"], datetime):
                 metadata["completed_at"] = metadata["completed_at"].isoformat()
-            
-            with open(metadata_path, "w", encoding="utf-8") as f:
-                json.dump(metadata, f, indent=2, ensure_ascii=False)
-            
+
+            _atomic_write_json(metadata_path, metadata)
+
             logger.debug(f"Saved task metadata: {task_id}")
             
             # Update index
@@ -214,13 +245,12 @@ class PersistenceService:
             task_dir.mkdir(parents=True, exist_ok=True)
             
             storyboard_path = self.get_storyboard_path(task_id)
-            
+
             # Convert storyboard to dict
             storyboard_dict = self._storyboard_to_dict(storyboard)
-            
-            with open(storyboard_path, "w", encoding="utf-8") as f:
-                json.dump(storyboard_dict, f, indent=2, ensure_ascii=False)
-            
+
+            _atomic_write_json(storyboard_path, storyboard_dict)
+
             logger.debug(f"Saved storyboard: {task_id}")
             
         except Exception as e:
@@ -346,10 +376,14 @@ class PersistenceService:
             "media_width": config.media_width,
             "media_height": config.media_height,
             "media_workflow": config.media_workflow,
+            # Direct-API video provider params (duration, audio-driven flag,
+            # first-frame workflow, etc). MUST be persisted so resume of an
+            # API video task doesn't silently drop the provider config.
+            "api_video_params": config.api_video_params,
             "frame_template": config.frame_template,
             "template_params": config.template_params,
         }
-    
+
     def _dict_to_config(self, data: Dict[str, Any]) -> StoryboardConfig:
         """Convert dict to StoryboardConfig"""
         return StoryboardConfig(
@@ -368,6 +402,7 @@ class PersistenceService:
             media_width=data.get("media_width", data.get("image_width", 1024)),  # Backward compatibility
             media_height=data.get("media_height", data.get("image_height", 1024)),  # Backward compatibility
             media_workflow=data.get("media_workflow", data.get("image_workflow")),  # Backward compatibility
+            api_video_params=data.get("api_video_params"),
             frame_template=data.get("frame_template", "1080x1920/default.html"),
             template_params=data.get("template_params"),
         )
@@ -450,8 +485,7 @@ class PersistenceService:
         """Save index to file"""
         try:
             index_data["last_updated"] = datetime.now().isoformat()
-            with open(self.index_file, "w", encoding="utf-8") as f:
-                json.dump(index_data, f, ensure_ascii=False, indent=2)
+            _atomic_write_json(self.index_file, index_data)
         except Exception as e:
             logger.error(f"Failed to save index: {e}")
     
@@ -486,8 +520,18 @@ class PersistenceService:
             "n_frames": metadata.get("result", {}).get("n_frames", 0),
             "file_size": metadata.get("result", {}).get("file_size", 0),
             "video_path": metadata.get("result", {}).get("video_path"),
+            # Resume/failure surface: copied from metadata so the History page
+            # can render error context and route the Resume button without
+            # round-tripping each task's metadata.json on every render.
+            "error": metadata.get("error"),
+            "source_page": metadata.get("input", {}).get("source_page"),
+            # UI-side pipeline name (e.g. "quick_create", "custom_media") so
+            # the History card can write a *per-pipeline* session-state key
+            # on Resume. Without this, multiple tabs on the same page would
+            # race to consume a shared key.
+            "source_pipeline": metadata.get("input", {}).get("source_pipeline"),
         }
-        
+
         # Update or append
         tasks = index.get("tasks", [])
         existing_idx = next((i for i, t in enumerate(tasks) if t["task_id"] == task_id), None)
@@ -541,6 +585,11 @@ class PersistenceService:
                     "n_frames": metadata.get("result", {}).get("n_frames", 0),
                     "file_size": metadata.get("result", {}).get("file_size", 0),
                     "video_path": metadata.get("result", {}).get("video_path"),
+                    # See _update_index_for_task for why these live on the
+                    # index entry rather than only in metadata.json.
+                    "error": metadata.get("error"),
+                    "source_page": metadata.get("input", {}).get("source_page"),
+                    "source_pipeline": metadata.get("input", {}).get("source_pipeline"),
                 })
         
         self._save_index(index)

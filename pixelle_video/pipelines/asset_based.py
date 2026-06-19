@@ -35,6 +35,7 @@ Example:
 from typing import List, Dict, Any, Optional, Callable
 from pathlib import Path
 import math
+import os
 from datetime import datetime
 
 from loguru import logger
@@ -99,7 +100,7 @@ class AssetBasedPipeline(LinearVideoPipeline):
     ) -> PipelineContext:
         """
         Execute pipeline with user-provided assets
-        
+
         Args:
             assets: List of asset file paths
             video_title: Video title
@@ -110,16 +111,22 @@ class AssetBasedPipeline(LinearVideoPipeline):
             bgm_volume: BGM volume (0.0-1.0, default 0.2)
             bgm_mode: BGM mode ("loop" or "once", default "loop")
             progress_callback: Optional callback for progress updates
-            **kwargs: Additional parameters
-        
+            **kwargs: Additional parameters. Recognised: ``resume_task_id``
+                (str) re-runs an existing task, skipping completed frames
+                and reloading the persisted storyboard.
+
         Returns:
             Pipeline context with generated video
         """
         from pixelle_video.pipelines.linear import PipelineContext
-        
+
+        # Pull resume_task_id out of kwargs first; mirror what
+        # LinearVideoPipeline.__call__ does for consistency.
+        resume_task_id = kwargs.pop("resume_task_id", None)
+
         # Store progress callback
         self._progress_callback = progress_callback
-        
+
         # Create custom context with asset-specific parameters
         ctx = PipelineContext(
             input_text=intent or video_title,  # Use intent or title as input_text
@@ -133,27 +140,49 @@ class AssetBasedPipeline(LinearVideoPipeline):
                 "bgm_volume": bgm_volume,
                 "bgm_mode": bgm_mode,
                 **kwargs
-            }
+            },
+            progress_callback=progress_callback,
+            resume_task_id=resume_task_id,
         )
-        
+
         # Store request parameters in context for easy access
         ctx.request = ctx.params
-        
+
         try:
             # Execute pipeline lifecycle
             await self.setup_environment(ctx)
-            await self.determine_title(ctx)
-            await self.generate_content(ctx)
-            await self.plan_visuals(ctx)
-            await self.initialize_storyboard(ctx)
+
+            # Persist initial metadata so the task is visible on the History
+            # page from the very start (matches LinearVideoPipeline behavior).
+            await self._persist_initial_metadata(ctx)
+
+            # Resume hook: if resume_task_id is set, load the persisted
+            # storyboard and skip content/visual planning.
+            if ctx.resume_task_id:
+                await self.load_resume_state(ctx)
+
+            if not ctx.skip_content_generation:
+                await self.determine_title(ctx)
+                await self.generate_content(ctx)
+                await self.plan_visuals(ctx)
+                await self.initialize_storyboard(ctx)
+
             await self.produce_assets(ctx)
             await self.post_production(ctx)
             await self.finalize(ctx)
-            
+
             return ctx
-            
+
         except Exception as e:
             await self.handle_exception(ctx, e)
+            # Best-effort failure persistence; never mask the original error.
+            try:
+                await self._persist_failure(ctx, e)
+            except Exception as persist_err:  # noqa: BLE001
+                logger.error(
+                    f"Failed to persist task failure for {ctx.task_id}: "
+                    f"{persist_err} (original error: {e})"
+                )
             raise
     
     def _emit_progress(self, event: ProgressEvent):
@@ -164,24 +193,42 @@ class AssetBasedPipeline(LinearVideoPipeline):
     async def setup_environment(self, context: PipelineContext) -> PipelineContext:
         """
         Analyze uploaded assets and build asset index
-        
+
         Args:
             context: Pipeline context with assets list
-        
+
         Returns:
             Updated context with asset_index
         """
-        # Create isolated task directory
-        task_dir, task_id = create_task_output_dir()
+        # Resume: reuse the existing task directory + ID so per-frame
+        # artifacts on disk remain reachable and ``load_resume_state`` finds
+        # the persisted storyboard.
+        if context.resume_task_id:
+            logger.info(
+                f"♻️  Resuming AssetBasedPipeline task {context.resume_task_id}"
+            )
+            task_dir, task_id = create_task_output_dir(task_id=context.resume_task_id)
+        else:
+            # Create isolated task directory
+            task_dir, task_id = create_task_output_dir()
+
         context.task_id = task_id
         context.task_dir = Path(task_dir)  # Convert to Path for easier usage
-        
+
         # Determine final video path
         context.final_video_path = get_task_final_video_path(task_id)
-        
-        logger.info(f"📁 Task directory created: {task_dir}")
+
+        logger.info(f"📁 Task directory: {task_dir}")
+
+        # On resume, ``load_resume_state`` will populate ``asset_index`` from
+        # the persisted storyboard (or, if it can't, we fall through to a
+        # full re-analyze, which is also fine because the assets on disk
+        # haven't changed). Either way, skip the analysis loop here.
+        if context.resume_task_id:
+            return context
+
         logger.info("🔍 Analyzing uploaded assets...")
-        
+
         assets: List[str] = context.request.get("assets", [])
         if not assets:
             raise ValueError("No assets provided. Please upload at least one image or video.")
@@ -283,7 +330,111 @@ class AssetBasedPipeline(LinearVideoPipeline):
         ))
         
         return context
-    
+
+    async def load_resume_state(self, context: PipelineContext) -> PipelineContext:
+        """
+        Resume hook: load the previously-persisted storyboard and skip the
+        content/visual planning phases.
+
+        Asset-based tasks store everything we need to keep going on disk:
+        scene→asset mapping is baked into each ``StoryboardFrame`` as
+        ``image_path``/``video_path``/``media_type``. We rebuild
+        ``ctx.config``, ``ctx.title``, ``ctx.matched_scenes``, and
+        ``self.asset_index`` from the storyboard so the rest of the pipeline
+        runs as if planning had just completed.
+
+        **Known limitation: multi-narration scenes lose sub-narration boundaries.**
+        The original LLM script can split one scene across multiple narration
+        sentences (e.g. ``["a", "b", "c"]``); ``initialize_storyboard`` joins
+        them with ``" "`` into a single ``frame.narration`` string before
+        persistence (see :meth:`initialize_storyboard`). The storyboard JSON
+        therefore only stores the joined text, not the list. On resume we
+        treat the joined text as one narration. Consequence: any frame whose
+        ``audio_path`` did NOT survive the previous run will, on resume, run
+        TTS once on the joined text instead of N times on each sub-narration.
+        The output audio will sound subtly different and the resulting
+        ``frame.duration`` may differ.
+
+        Frames whose ``audio_path`` IS still on disk are unaffected — the
+        existing audio is reused as-is.
+
+        This is acceptable for v1 because (a) the most common failure path is
+        a TTS error mid-frame, in which case the partial audio is overwritten
+        on retry anyway, and (b) the difference is cosmetic rather than
+        correctness-breaking. A proper fix would persist a ``sub_narrations:
+        List[str]`` field on ``StoryboardFrame`` and is tracked as v2.
+        """
+        if not getattr(self.core, "persistence", None):
+            logger.warning(
+                "Resume requested but no persistence service available; "
+                "falling through to fresh content generation"
+            )
+            return context
+
+        storyboard = await self.core.persistence.load_storyboard(context.task_id)
+        if not storyboard:
+            logger.warning(
+                f"Resume requested for task {context.task_id} but no "
+                f"storyboard on disk; falling through to fresh content "
+                f"generation"
+            )
+            return context
+
+        context.storyboard = storyboard
+        context.config = storyboard.config
+        context.title = storyboard.title or ""
+        context.narrations = [f.narration for f in storyboard.frames]
+
+        # Reset total_duration; produce_assets recomputes it as a sum across
+        # frames so resume + skip_already_done doesn't double-count.
+        storyboard.total_duration = 0.0
+
+        # Rebuild ``self.asset_index`` from the per-frame media paths so any
+        # downstream code that reaches into ``self.asset_index`` (e.g. log
+        # summaries) still sees something sensible.
+        self.asset_index = {}
+        for f in storyboard.frames:
+            asset_path = f.video_path if f.media_type == "video" else f.image_path
+            if asset_path and asset_path not in self.asset_index:
+                self.asset_index[asset_path] = {
+                    "path": asset_path,
+                    "type": f.media_type or "image",
+                    "name": Path(asset_path).name,
+                    "description": "(resumed; original analysis not reloaded)",
+                }
+        context.asset_index = self.asset_index
+
+        # Reconstruct ``matched_scenes`` from the persisted frames so any
+        # downstream code that consumed it during the original run sees an
+        # equivalent shape (this pipeline mostly relies on
+        # ``storyboard.frames`` from here on, but be defensive).
+        context.matched_scenes = []
+        for f in storyboard.frames:
+            asset_path = f.video_path if f.media_type == "video" else f.image_path
+            scene_dict = {
+                "scene_number": f.index + 1,
+                "asset_path": asset_path,
+                "matched_asset": asset_path,
+                "narrations": [f.narration] if f.narration else [],
+            }
+            context.matched_scenes.append(scene_dict)
+            # Re-attach _scene_data so produce_assets can regenerate TTS for
+            # any frame whose audio didn't survive the previous run. The
+            # storyboard JSON only persists the joined narration, so we lose
+            # the original sub-narration list; treat the joined text as a
+            # single narration.
+            f._scene_data = scene_dict
+
+        n_done = sum(1 for f in storyboard.frames if f.video_segment_path)
+        n_total = len(storyboard.frames)
+        logger.info(
+            f"♻️  Resuming task {context.task_id}: {n_done}/{n_total} "
+            f"frames already complete, {n_total - n_done} remaining"
+        )
+
+        context.skip_content_generation = True
+        return context
+
     async def determine_title(self, context: PipelineContext) -> PipelineContext:
         """
         Use user-provided title if available, otherwise leave empty
@@ -543,26 +694,63 @@ class AssetBasedPipeline(LinearVideoPipeline):
     async def produce_assets(self, context: PipelineContext) -> PipelineContext:
         """
         Generate scene videos using FrameProcessor (asset + multiple narrations + template)
-        
+
         Args:
             context: Pipeline context
-        
+
         Returns:
             Updated context with processed frames
         """
         logger.info("🎬 Producing scene videos...")
-        
+
         storyboard = context.storyboard
         config = context.config
         total_frames = len(storyboard.frames)
-        
+
+        # Reset total_duration to 0; we recompute it as a sum at the end of
+        # the loop so resume + per-frame skip don't double-count.
+        storyboard.total_duration = 0.0
+
+        # Cheap checkpoint helper: save storyboard.json after each frame so
+        # any failure mid-task leaves a resumable trail. Tolerates missing
+        # persistence service.
+        async def _checkpoint_storyboard():
+            persistence = getattr(self.core, "persistence", None)
+            if persistence and context.task_id:
+                try:
+                    await persistence.save_storyboard(context.task_id, storyboard)
+                except Exception as e:  # noqa: BLE001
+                    logger.warning(f"Storyboard checkpoint failed: {e}")
+
         # Progress range: 30% - 85% for frame production
         base_progress = 0.30
         progress_range = 0.55  # 85% - 30%
-        
+
         for i, frame in enumerate(storyboard.frames, 1):
             logger.info(f"Producing scene {i}/{total_frames}...")
-            
+
+            # Resume short-circuit: if this frame already produced a final
+            # video segment on a previous run AND the file is still on disk,
+            # skip the whole scene. This mirrors FrameProcessor's top-level
+            # check and is what makes resume cheap for asset-based tasks.
+            if (
+                frame.video_segment_path
+                and os.path.exists(frame.video_segment_path)
+            ):
+                logger.info(
+                    f"⏭️  Scene {i} already completed "
+                    f"(segment exists at {frame.video_segment_path}), skipping"
+                )
+                self._emit_progress(ProgressEvent(
+                    event_type="frame_step",
+                    progress=base_progress + i / total_frames * progress_range,
+                    frame_current=i,
+                    frame_total=total_frames,
+                    step=4,
+                    action="skip",
+                ))
+                continue
+
             # Emit progress for this frame (each frame has 4 steps: audio, combine, duration, compose)
             frame_progress = base_progress + (i - 1) / total_frames * progress_range
             self._emit_progress(ProgressEvent(
@@ -579,69 +767,81 @@ class AssetBasedPipeline(LinearVideoPipeline):
             narrations = scene.get("narrations", [scene.get("narration", "")])
             if isinstance(narrations, str):
                 narrations = [narrations]
-            
+
             logger.info(f"Scene {i} has {len(narrations)} narration(s)")
-            
-            # Step 1: Generate audio for each narration and combine
-            narration_audios = []
-            for j, narration_text in enumerate(narrations, 1):
-                audio_path = Path(context.task_dir) / "frames" / f"{i:02d}_narration_{j}.mp3"
-                audio_path.parent.mkdir(parents=True, exist_ok=True)
-                
-                await self.core.tts(
-                    text=narration_text,
-                    output_path=str(audio_path),
-                    voice=config.voice_id,
-                    speed=config.tts_speed
+
+            # Resume skip: if the per-scene audio already exists on disk
+            # (from a prior run that crashed after TTS but before video
+            # composition), reuse it instead of re-running TTS.
+            if (
+                frame.audio_path
+                and os.path.exists(frame.audio_path)
+            ):
+                logger.info(
+                    f"  ⏭️  Reusing existing audio for scene {i}: "
+                    f"{frame.audio_path}"
                 )
-                
-                narration_audios.append(str(audio_path))
-                logger.debug(f"  Narration {j}/{len(narrations)}: {narration_text[:30]}...")
-            
-            # Concatenate all narration audios for this scene
-            if len(narration_audios) > 1:
-                from pixelle_video.utils.os_util import get_task_frame_path
-                
-                # Emit progress for combining audio
-                frame_progress = base_progress + ((i - 1) + 0.25) / total_frames * progress_range
-                self._emit_progress(ProgressEvent(
-                    event_type="frame_step",
-                    progress=frame_progress,
-                    frame_current=i,
-                    frame_total=total_frames,
-                    step=2,
-                    action="audio"
-                ))
-                
-                combined_audio_path = Path(context.task_dir) / "frames" / f"{i:02d}_audio.mp3"
-                
-                # Use FFmpeg to concatenate audio files
-                import subprocess
-                
-                # Create a file list for FFmpeg concat
-                filelist_path = Path(context.task_dir) / "frames" / f"{i:02d}_audiolist.txt"
-                with open(filelist_path, 'w') as f:
-                    for audio_file in narration_audios:
-                        escaped_path = str(Path(audio_file).absolute()).replace("'", "'\\''")
-                        f.write(f"file '{escaped_path}'\n")
-                
-                # Concatenate audio files
-                concat_cmd = [
-                    'ffmpeg',
-                    '-f', 'concat',
-                    '-safe', '0',
-                    '-i', str(filelist_path),
-                    '-c', 'copy',
-                    '-y',
-                    str(combined_audio_path)
-                ]
-                
-                subprocess.run(concat_cmd, check=True, capture_output=True)
-                frame.audio_path = str(combined_audio_path)
-                
-                logger.info(f"✅ Combined {len(narration_audios)} narrations into one audio")
             else:
-                frame.audio_path = narration_audios[0]
+                # Step 1: Generate audio for each narration and combine
+                narration_audios = []
+                for j, narration_text in enumerate(narrations, 1):
+                    audio_path = Path(context.task_dir) / "frames" / f"{i:02d}_narration_{j}.mp3"
+                    audio_path.parent.mkdir(parents=True, exist_ok=True)
+
+                    await self.core.tts(
+                        text=narration_text,
+                        output_path=str(audio_path),
+                        voice=config.voice_id,
+                        speed=config.tts_speed
+                    )
+
+                    narration_audios.append(str(audio_path))
+                    logger.debug(f"  Narration {j}/{len(narrations)}: {narration_text[:30]}...")
+
+                # Concatenate all narration audios for this scene
+                if len(narration_audios) > 1:
+                    from pixelle_video.utils.os_util import get_task_frame_path
+
+                    # Emit progress for combining audio
+                    frame_progress = base_progress + ((i - 1) + 0.25) / total_frames * progress_range
+                    self._emit_progress(ProgressEvent(
+                        event_type="frame_step",
+                        progress=frame_progress,
+                        frame_current=i,
+                        frame_total=total_frames,
+                        step=2,
+                        action="audio"
+                    ))
+
+                    combined_audio_path = Path(context.task_dir) / "frames" / f"{i:02d}_audio.mp3"
+
+                    # Use FFmpeg to concatenate audio files
+                    import subprocess
+
+                    # Create a file list for FFmpeg concat
+                    filelist_path = Path(context.task_dir) / "frames" / f"{i:02d}_audiolist.txt"
+                    with open(filelist_path, 'w') as f:
+                        for audio_file in narration_audios:
+                            escaped_path = str(Path(audio_file).absolute()).replace("'", "'\\''")
+                            f.write(f"file '{escaped_path}'\n")
+
+                    # Concatenate audio files
+                    concat_cmd = [
+                        'ffmpeg',
+                        '-f', 'concat',
+                        '-safe', '0',
+                        '-i', str(filelist_path),
+                        '-c', 'copy',
+                        '-y',
+                        str(combined_audio_path)
+                    ]
+
+                    subprocess.run(concat_cmd, check=True, capture_output=True)
+                    frame.audio_path = str(combined_audio_path)
+
+                    logger.info(f"✅ Combined {len(narration_audios)} narrations into one audio")
+                else:
+                    frame.audio_path = narration_audios[0]
             
             # Step 2: Use FrameProcessor to generate composed frame and video
             # FrameProcessor will handle:
@@ -752,9 +952,22 @@ class AssetBasedPipeline(LinearVideoPipeline):
                 if extracted_tail:
                     context._last_api_video_tail_frame = extracted_tail
 
-            storyboard.total_duration += processed_frame.duration or frame.duration or 0
-            
             logger.success(f"✅ Scene {i} complete")
+
+            # Checkpoint after every successful frame so a crash on the next
+            # one leaves a resumable trail (the just-completed frame's
+            # video_segment_path lets the next run skip it entirely).
+            await _checkpoint_storyboard()
+
+        # Recompute total_duration as a sum across frames. This is robust to
+        # resume (where some frames are early-returned and we don't want to
+        # double-count) and matches the canonical definition of "total" used
+        # by Storyboard.is_completed.
+        storyboard.total_duration = sum(f.duration or 0 for f in storyboard.frames)
+        logger.info(
+            f"✅ produce_assets done: {len(storyboard.frames)} frames, "
+            f"total duration {storyboard.total_duration:.2f}s"
+        )
         
         # Emit completion of frame production
         self._emit_progress(ProgressEvent(
@@ -871,7 +1084,11 @@ class AssetBasedPipeline(LinearVideoPipeline):
             video_path_obj = Path(ctx.final_video_path)
             file_size = video_path_obj.stat().st_size if video_path_obj.exists() else 0
             
-            # Build metadata
+            # Build metadata. Preserve source_page / source_pipeline that
+            # were stamped on the kwargs by the UI wrapper — _persist_initial_metadata
+            # already wrote them, but the success path overwrites that file
+            # with this dict, so we need to re-include them or the index
+            # entry's source_* fields will end up None on completed tasks.
             input_params = {
                 "text": ctx.input_text,
                 "mode": "asset_based",
@@ -883,6 +1100,8 @@ class AssetBasedPipeline(LinearVideoPipeline):
                 "source": ctx.request.get("source"),
                 "voice_id": ctx.request.get("voice_id"),
                 "tts_speed": ctx.request.get("tts_speed"),
+                "source_page": ctx.params.get("source_page"),
+                "source_pipeline": ctx.params.get("source_pipeline"),
             }
             
             metadata = {

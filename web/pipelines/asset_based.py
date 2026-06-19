@@ -51,6 +51,16 @@ class AssetBasedPipelineUI(PipelineUI):
         return tr("pipeline.custom_media.description")
     
     def render(self, pixelle_video: Any):
+        # Resume support: this tab has its OWN session-state key so it can't
+        # accidentally consume the standard tab's resume hint (Streamlit
+        # renders all Home-page tabs in a single script run, so a shared key
+        # would race). The History page writes ``resume_task_id_custom_media``
+        # for any failed task whose ``source_pipeline == self.name``.
+        resume_state_key = f"resume_task_id_{self.name}"
+        resume_task_id = st.session_state.pop(resume_state_key, None)
+        if resume_task_id:
+            st.info(tr("history.resume_banner", task_id=resume_task_id))
+
         # Three-column layout
         left_col, middle_col, right_col = st.columns([1, 1, 1])
         
@@ -77,9 +87,13 @@ class AssetBasedPipelineUI(PipelineUI):
                 "pipeline": self.name,
                 **asset_params,
                 **bgm_params,
-                **config_params
+                **config_params,
+                # Threaded through to the pipeline call. None when not
+                # resuming, in which case the pipeline takes the fresh-task
+                # path.
+                "resume_task_id": resume_task_id,
             }
-            
+
             self._render_output_preview(pixelle_video, video_params)
     
     def _render_asset_input(self) -> dict:
@@ -448,7 +462,7 @@ class AssetBasedPipelineUI(PipelineUI):
                         progress_bar.progress(min(int(event.progress * 100), 99))
                     
                     # Execute pipeline with progress callback
-                    ctx = run_async(pipeline(
+                    pipeline_kwargs = dict(
                         assets=video_params["assets"],
                         video_title=video_params.get("video_title", ""),
                         intent=video_params.get("intent"),
@@ -461,8 +475,18 @@ class AssetBasedPipelineUI(PipelineUI):
                         api_video_params=video_params.get("api_video_params"),
                         voice_id=video_params.get("voice_id", "zh-CN-YunjianNeural"),
                         tts_speed=video_params.get("tts_speed", 1.2),
-                        progress_callback=update_progress
-                    ))
+                        progress_callback=update_progress,
+                        # Stamp source page so the History card's Resume
+                        # button knows where to send the user back to.
+                        source_page="1_🎬_Home",
+                        # UI-side pipeline name; the History page uses this
+                        # to write a per-pipeline resume key when 🔄 is
+                        # clicked, so each tab consumes only its own hint.
+                        source_pipeline=self.name,
+                    )
+                    if video_params.get("resume_task_id"):
+                        pipeline_kwargs["resume_task_id"] = video_params["resume_task_id"]
+                    ctx = run_async(pipeline(**pipeline_kwargs))
                     
                     total_time = time.time() - start_time
                     

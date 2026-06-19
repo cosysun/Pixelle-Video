@@ -170,7 +170,21 @@ def render_grid_task_card(task: dict, pixelle_video):
     duration = task.get("duration", 0)
     n_frames = task.get("n_frames", 0)
     video_path = task.get("video_path", "")
-    
+    # Resume payload: error message and the page that originally launched
+    # the task. Both are propagated from the task's metadata.json into the
+    # index entry by PersistenceService so the card doesn't have to round-
+    # trip each task's metadata file on every render.
+    error_message = task.get("error") or ""
+    source_page = task.get("source_page") or "1_🎬_Home"
+    # UI-side pipeline name (e.g. "quick_create" / "custom_media"). Used to
+    # write a *per-pipeline* session-state key on Resume so each tab on the
+    # Home page only consumes its own resume hint. Falls back to
+    # "quick_create" for tasks created before this field existed; old
+    # standard-pipeline tasks resume into the standard tab and old asset-
+    # based tasks would get a None source_pipeline — for those, see the 🔄
+    # click handler below for fallback behavior.
+    source_pipeline = task.get("source_pipeline") or "quick_create"
+
     # Status badge
     status_map = {
         "completed": "✅",
@@ -179,14 +193,14 @@ def render_grid_task_card(task: dict, pixelle_video):
         "pending": "⏸️",
     }
     status_icon = status_map.get(status, "❓")
-    
+
     # Get input text
     detail = run_async(pixelle_video.history.get_task_detail(task_id))
     input_text = ""
     if detail and detail.get("metadata"):
         input_params = detail["metadata"].get("input", {})
         input_text = input_params.get("text", "")
-    
+
     # Card container
     with st.container():
         # Video preview at top
@@ -198,25 +212,34 @@ def render_grid_task_card(task: dict, pixelle_video):
                 f"justify-content: center; border-radius: 4px; font-size: 48px;'>📹</div>",
                 unsafe_allow_html=True
             )
-        
+
         # Title + Status (compact) - show actual title from task
         st.markdown(f"**{status_icon} {truncate_text(title, 50)}**")
-        
+
         # Input content (very short)
         if input_text:
             st.caption(truncate_text(input_text, 60))
-        
+
         # Meta info (one line)
         st.caption(f"🕒 {format_datetime(created_at)} | ⏱️ {format_duration(duration)} | 🎬 {n_frames}")
-        
-        # Action buttons (compact, 3 columns)
-        col1, col2, col3 = st.columns(3)
-        
+
+        # Failure detail line: surface the persisted error so the user knows
+        # why this task is recoverable.
+        if status == "failed" and error_message:
+            st.caption(f"❌ {truncate_text(error_message, 80)}")
+
+        # Action buttons (compact). Failed tasks get a 4th 🔄 Resume button.
+        is_failed = status == "failed"
+        if is_failed:
+            col1, col2, col3, col4 = st.columns(4)
+        else:
+            col1, col2, col3 = st.columns(3)
+
         with col1:
             if st.button("👁️", key=f"view_{task_id}", help=tr("history.task_card.view_detail"), use_container_width=True):
                 st.session_state[f"detail_{task_id}"] = True
                 st.rerun()
-        
+
         with col2:
             if video_path and os.path.exists(video_path):
                 with open(video_path, "rb") as f:
@@ -231,11 +254,39 @@ def render_grid_task_card(task: dict, pixelle_video):
                     )
             else:
                 st.button("⬇️", key=f"download_disabled_{task_id}", disabled=True, use_container_width=True)
-        
+
         with col3:
             if st.button("🗑️", key=f"delete_{task_id}", help=tr("history.task_card.delete"), use_container_width=True):
                 st.session_state[f"confirm_delete_{task_id}"] = True
                 st.rerun()
+
+        if is_failed:
+            with col4:
+                # 🔄 Resume: stash the task_id under a *per-pipeline* session
+                # key so each tab on the Home page only consumes its own
+                # resume hint (the alternative — a shared key — was racy
+                # because Streamlit renders all tabs in a single script run
+                # and whichever tab pops first wins). Then route the user
+                # back to the page that originally launched the task.
+                if st.button(
+                    "🔄",
+                    key=f"resume_{task_id}",
+                    help=tr("history.task_card.resume"),
+                    use_container_width=True,
+                ):
+                    st.session_state[f"resume_task_id_{source_pipeline}"] = task_id
+                    target = f"pages/{source_page}.py"
+                    try:
+                        st.switch_page(target)
+                    except Exception as e:
+                        # Fall back to Home if the recorded source_page is
+                        # missing (renamed page, older task without the
+                        # source_page tag, etc.).
+                        logger.warning(
+                            f"switch_page({target}) failed: {e}; "
+                            f"falling back to Home"
+                        )
+                        st.switch_page("pages/1_🎬_Home.py")
         
         # Delete confirmation (show in modal-like way)
         if st.session_state.get(f"confirm_delete_{task_id}", False):
@@ -284,9 +335,14 @@ def render_task_detail_modal(task_id: str, pixelle_video):
     # Left column: Input and config
     with col_input:
         st.markdown(f"**📝 {tr('history.detail.input_params')}**")
-        
+
         input_params = metadata.get("input", {})
-        
+
+        # If this task ended in failure, surface the persisted error
+        # message so the user can decide whether to resume or delete.
+        if metadata.get("status") == "failed" and metadata.get("error"):
+            st.error(f"**{tr('history.detail.error')}**: {metadata['error']}")
+
         # Display input parameters
         st.markdown(f"**{tr('history.detail.mode')}:** {input_params.get('mode', 'N/A')}")
         st.markdown(f"**{tr('history.detail.n_scenes')}:** {input_params.get('n_scenes', 'N/A')}")

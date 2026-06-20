@@ -14,11 +14,17 @@
 Session state management for web UI
 """
 
+import hashlib
+import inspect
+import json
+
 import streamlit as st
 from loguru import logger
 
 from web.i18n import get_language, set_language
 from web.utils.async_helpers import run_async
+
+_PIXELLE_CORE_CAPABILITY_VERSION = 4
 
 
 def init_session_state():
@@ -39,6 +45,32 @@ def init_i18n():
     set_language(st.session_state.language)
 
 
+def _needs_core_recreate(pixelle_video) -> bool:
+    """Return True when cached core predates capabilities required by current UI."""
+    required_history_methods = (
+        "remove_bgm",
+        "update_bgm",
+        "regenerate_all_audio",
+        "regenerate_frame_audio",
+        "regenerate_frame_media",
+        "replace_template",
+        "request_cancel_edit",
+    )
+    history = getattr(pixelle_video, "history", None)
+    if history is None:
+        return True
+    if getattr(pixelle_video, "task_editor", None) is None:
+        return True
+    if any(not hasattr(history, method) for method in required_history_methods):
+        return True
+
+    try:
+        signature = inspect.signature(history.regenerate_all_audio)
+    except (TypeError, ValueError):
+        return True
+    return "progress_callback" not in signature.parameters
+
+
 def get_pixelle_video():
     """
     Get initialized Pixelle-Video instance with proper caching and cleanup
@@ -46,12 +78,10 @@ def get_pixelle_video():
     Uses st.session_state to cache the instance per user session.
     ComfyKit is lazily initialized and automatically recreated on config changes.
     """
-    from pixelle_video.service import PixelleVideoCore
     from pixelle_video.config import config_manager
+    from pixelle_video.service import PixelleVideoCore
     
     # Compute config hash for change detection
-    import hashlib
-    import json
     config_dict = config_manager.config.to_dict()
     # Only track ComfyUI config for hash (other config changes don't need core recreation)
     comfyui_config = config_dict.get("comfyui", {})
@@ -71,6 +101,22 @@ def get_pixelle_video():
             run_async(old_core.cleanup())
         except Exception as e:
             logger.warning(f"Failed to cleanup old PixelleVideoCore: {e}")
+    elif _needs_core_recreate(st.session_state.pixelle_video):
+        need_recreate = True
+        logger.info("Cached PixelleVideoCore is missing new editing services, recreating")
+        old_core = st.session_state.pixelle_video
+        try:
+            run_async(old_core.cleanup())
+        except Exception as e:
+            logger.warning(f"Failed to cleanup old PixelleVideoCore: {e}")
+    elif st.session_state.get("pixelle_video_capability_version") != _PIXELLE_CORE_CAPABILITY_VERSION:
+        need_recreate = True
+        logger.info("PixelleVideoCore capability version changed, recreating")
+        old_core = st.session_state.pixelle_video
+        try:
+            run_async(old_core.cleanup())
+        except Exception as e:
+            logger.warning(f"Failed to cleanup old PixelleVideoCore: {e}")
     
     if need_recreate:
         # Create and initialize new instance
@@ -80,6 +126,7 @@ def get_pixelle_video():
         # Cache in session state
         st.session_state.pixelle_video = pixelle_video
         st.session_state.pixelle_video_config_hash = config_hash
+        st.session_state.pixelle_video_capability_version = _PIXELLE_CORE_CAPABILITY_VERSION
         logger.info("✅ PixelleVideoCore initialized and cached")
     else:
         pixelle_video = st.session_state.pixelle_video

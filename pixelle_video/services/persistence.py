@@ -18,12 +18,18 @@ Handles task metadata and storyboard persistence to filesystem.
 
 import json
 import os
-from pathlib import Path
-from typing import List, Optional, Dict, Any
 from datetime import datetime
+from pathlib import Path
+from typing import Any, Dict, List, Optional
+
 from loguru import logger
 
-from pixelle_video.models.storyboard import Storyboard, StoryboardFrame, StoryboardConfig, ContentMetadata
+from pixelle_video.models.storyboard import (
+    ContentMetadata,
+    Storyboard,
+    StoryboardConfig,
+    StoryboardFrame,
+)
 
 
 def _atomic_write_json(path: Path, data: Dict[str, Any]) -> None:
@@ -419,6 +425,7 @@ class PersistenceService:
             "video_path": frame.video_path,
             "composed_image_path": frame.composed_image_path,
             "video_segment_path": frame.video_segment_path,
+            "image_source_index": frame.image_source_index,
             "duration": frame.duration,
             "created_at": frame.created_at.isoformat() if frame.created_at else None,
         }
@@ -435,6 +442,7 @@ class PersistenceService:
             video_path=data.get("video_path"),
             composed_image_path=data.get("composed_image_path"),
             video_segment_path=data.get("video_segment_path"),
+            image_source_index=data.get("image_source_index"),
             duration=data.get("duration", 0.0),
             created_at=datetime.fromisoformat(data["created_at"]) if data.get("created_at") else None,
         )

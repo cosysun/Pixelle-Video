@@ -1,7 +1,7 @@
 {
   "1": {
     "inputs": {
-      "value": "你给手机打字时，它总能猜出你想说的下一个词。大模型的原理，本质上也是这样，只不过规模大了无数倍。\n\n大模型是一种通过海量数据训练出来的人工智能系统。它学习了互联网文章、书籍、代码、对话等大量内容，从而掌握语言中的规律。\n\n它最核心的任务，是根据前面的内容预测接下来最可能出现的字或词。例如当你输入“今天天气”，它可能预测“不错”“很好”或“怎么样”。通过不断重复这个过程，它就能生成完整的句子、文章和对话。"
+      "value": "你给手机打字时，它总能猜出你想说的下一个词。大模型的原理，本质上也是这样，只不过规模大了无数倍。\n\n大模型是一种通过海量数据训练出来的人工智能系统。它学习了互联网文章、书籍、代码、对话等大量内容，从而掌握语言中的规律。\n\n它最核心的任务，是根据前面的内容预测接下来最可能出现的字或词。例如当你输入“今天天气”，它可能预测“不错”“很好”或“怎么样”。通过不断重复这个过程，它就能生成完整的句子、文章和对话。\n\n训练大模型有点像让一个学生阅读海量书籍，然后不断参加考试。系统会遮住后面的内容，让它猜下一个词是什么。如果猜错，就调整模型内部参数；经过数万亿次练习后，它的预测能力会越来越强。"
     },
     "class_type": "PrimitiveStringMultiline",
     "_meta": {
@@ -10,16 +10,16 @@
   },
   "4": {
     "inputs": {
-      "sample": "output4.wav",
+      "sample": "output.wav",
       "speech": [
         "1",
         0
       ],
-      "seed": 1895,
+      "seed": 694,
       "model": "F5v1",
       "vocoder": "auto",
       "speed": 1,
-      "model_type": "F5TTS_Base"
+      "model_type": "F5TTS_v1_Base"
     },
     "class_type": "F5TTSAudio",
     "_meta": {
@@ -30,7 +30,7 @@
     "inputs": {
       "filename_prefix": "audio/ComfyUI",
       "quality": "V0",
-      "audioUI": "/api/view?filename=ComfyUI_00181_.mp3&type=output&subfolder=audio&rand=0.4045618863852589",
+      "audioUI": "/api/view?filename=ComfyUI_00288_.mp3&type=output&subfolder=audio&rand=0.8692657600729212",
       "audio": [
         "4",
         0

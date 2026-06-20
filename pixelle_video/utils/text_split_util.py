@@ -121,23 +121,23 @@ def split_narration_into_chunks(text: str, max_chars: int = 35) -> list[str]:
     # Step 2: any chunk still too long -> split on secondary punctuation.
     refined: list[str] = []
     for chunk in chunks:
-        refined.append(chunk)
-        # give up _SECONDARY_PUNCT split
-        # if len(chunk) <= max_chars:
-        #     refined.append(chunk)
-        #     continue
-        # clauses = _split_keep_terminators(chunk, _SECONDARY_PUNCT)
-        # sub_chunks = _greedy_pack(clauses, max_chars)
-        # # Step 3: still too long -> hard split.
-        # for sub in sub_chunks:
-        #     if len(sub) <= max_chars:
-        #         refined.append(sub)
-        #     else:
-        #         logger.warning(
-        #             f"split_narration_into_chunks: hard-splitting "
-        #             f"{len(sub)}-char segment with no usable punctuation: {sub!r}"
-        #         )
-        #         refined.extend(_hard_split(sub, max_chars))
+        if len(chunk) <= max_chars:
+            refined.append(chunk)
+            continue
+
+        clauses = _split_keep_terminators(chunk, _SECONDARY_PUNCT)
+        sub_chunks = _greedy_pack(clauses, max_chars)
+
+        # Step 3: still too long -> hard split.
+        for sub in sub_chunks:
+            if len(sub) <= max_chars:
+                refined.append(sub)
+            else:
+                logger.warning(
+                    f"split_narration_into_chunks: hard-splitting "
+                    f"{len(sub)}-char segment with no usable punctuation: {sub!r}"
+                )
+                refined.extend(_hard_split(sub, max_chars))
 
     # Drop any empty pieces (shouldn't happen, but defensive).
     return [c for c in refined if c]

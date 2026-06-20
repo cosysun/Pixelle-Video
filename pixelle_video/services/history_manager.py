@@ -17,10 +17,11 @@ Business logic for history management (UI-agnostic).
 Provides high-level operations on top of PersistenceService.
 """
 
-from typing import List, Dict, Optional, Any
-from pathlib import Path
+from typing import Any, Callable, Dict, Optional
+
 from loguru import logger
 
+from pixelle_video.models.progress import ProgressEvent
 from pixelle_video.services.persistence import PersistenceService
 
 
@@ -36,14 +37,16 @@ class HistoryManager:
     - Future: Frame regeneration, export, etc.
     """
     
-    def __init__(self, persistence: PersistenceService):
+    def __init__(self, persistence: PersistenceService, task_editor=None):
         """
         Initialize history manager
         
         Args:
             persistence: PersistenceService instance
+            task_editor: Optional task editing service
         """
         self.persistence = persistence
+        self.task_editor = task_editor
     
     async def get_task_list(
         self,
@@ -172,36 +175,91 @@ class HistoryManager:
         await self.persistence.rebuild_index()
     
     # ========================================================================
-    # Future Extensions (Phase 3)
+    # Editing Operations
     # ========================================================================
-    
-    async def regenerate_frame(
+
+    def _require_task_editor(self):
+        if self.task_editor is None:
+            raise RuntimeError("Task editing service is not available")
+        return self.task_editor
+
+    async def remove_bgm(self, task_id: str) -> Dict[str, Any]:
+        """Remove background music by rebuilding the final video."""
+        return await self._require_task_editor().remove_bgm(task_id)
+
+    async def update_bgm(
+        self,
+        task_id: str,
+        bgm_path: Optional[str],
+        bgm_volume: float = 0.2,
+        bgm_mode: str = "loop",
+    ) -> Dict[str, Any]:
+        """Rebuild the final video with a new BGM setting."""
+        return await self._require_task_editor().update_bgm(
+            task_id,
+            bgm_path,
+            bgm_volume=bgm_volume,
+            bgm_mode=bgm_mode,
+        )
+
+    async def regenerate_all_audio(
+        self,
+        task_id: str,
+        tts_overrides: Dict[str, Any],
+        progress_callback: Optional[Callable[[ProgressEvent], None]] = None,
+    ) -> Dict[str, Any]:
+        """Regenerate voiceover for every frame and rebuild the final video."""
+        return await self._require_task_editor().regenerate_all_audio(
+            task_id,
+            tts_overrides,
+            progress_callback=progress_callback,
+        )
+
+    async def regenerate_frame_audio(
         self,
         task_id: str,
         frame_index: int,
-        **override_params
-    ) -> Optional[str]:
-        """
-        Regenerate a specific frame (FUTURE FEATURE)
-        
-        Args:
-            task_id: Original task ID
-            frame_index: Frame index to regenerate (0-based)
-            **override_params: Parameters to override (image_prompt, style, etc.)
-        
-        Returns:
-            New frame image path or None if failed
-        
-        TODO: Implement in Phase 3
-        - Load original storyboard
-        - Get frame parameters
-        - Override with new parameters
-        - Call image generation service
-        - Update storyboard
-        - Re-composite video
-        """
-        logger.warning("regenerate_frame is not implemented yet (Phase 3 feature)")
-        return None
+        narration: str,
+        tts_overrides: Optional[Dict[str, Any]] = None,
+        persist_overrides: bool = False,
+    ) -> Dict[str, Any]:
+        """Regenerate one frame's voiceover and rebuild the final video."""
+        return await self._require_task_editor().regenerate_frame_audio(
+            task_id,
+            frame_index,
+            narration,
+            tts_overrides=tts_overrides,
+            persist_overrides=persist_overrides,
+        )
+
+    async def regenerate_frame_media(
+        self,
+        task_id: str,
+        frame_index: int,
+        image_prompt: str,
+        media_overrides: Optional[Dict[str, Any]] = None,
+        persist_overrides: bool = False,
+    ) -> Dict[str, Any]:
+        """Regenerate one frame's visual media and rebuild the final video."""
+        return await self._require_task_editor().regenerate_frame_media(
+            task_id,
+            frame_index,
+            image_prompt,
+            media_overrides=media_overrides,
+            persist_overrides=persist_overrides,
+        )
+
+    async def replace_template(self, task_id: str, frame_template: str) -> Dict[str, Any]:
+        """Replace the task-level frame template and rebuild the final video."""
+        return await self._require_task_editor().replace_template(task_id, frame_template)
+
+    async def request_cancel_edit(self, task_id: str) -> None:
+        """Request cooperative cancellation for an in-progress edit operation."""
+        self._require_task_editor().request_cancel(task_id)
+
+    # ========================================================================
+    # Future Extensions
+    # ========================================================================
     
     async def export_task(self, task_id: str, export_path: str) -> Optional[str]:
         """

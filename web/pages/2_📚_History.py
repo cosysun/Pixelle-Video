@@ -14,10 +14,11 @@
 History Page - View generation history and manage tasks
 """
 
-import sys
-from pathlib import Path
-from datetime import datetime
+import importlib
 import os
+import sys
+from datetime import datetime
+from pathlib import Path
 
 # Add project root to sys.path
 _script_dir = Path(__file__).resolve().parent
@@ -25,13 +26,14 @@ _project_root = _script_dir.parent.parent
 if str(_project_root) not in sys.path:
     sys.path.insert(0, str(_project_root))
 
-import streamlit as st
-from loguru import logger
+import streamlit as st  # noqa: E402
+from loguru import logger  # noqa: E402
 
-from web.state.session import init_session_state, init_i18n, get_pixelle_video
-from web.components.header import render_header
-from web.i18n import tr
-from web.utils.async_helpers import run_async
+from pixelle_video.tts_voices import EDGE_TTS_VOICES, get_voice_display_name  # noqa: E402
+from web.components.header import render_header  # noqa: E402
+from web.i18n import get_language, tr  # noqa: E402
+from web.state.session import get_pixelle_video, init_i18n, init_session_state  # noqa: E402
+from web.utils.async_helpers import run_async  # noqa: E402
 
 # Page config
 st.set_page_config(
@@ -72,7 +74,7 @@ def format_datetime(iso_string: str) -> str:
     try:
         dt = datetime.fromisoformat(iso_string)
         return dt.strftime("%m-%d %H:%M")
-    except:
+    except Exception:
         return iso_string
 
 
@@ -81,6 +83,268 @@ def truncate_text(text: str, max_length: int = 60) -> str:
     if len(text) <= max_length:
         return text
     return text[:max_length] + "..."
+
+
+def _workflow_options(service, current_key: str | None = None, media_type: str | None = None):
+    """Return display options and workflow metadata for a workflow-capable service."""
+    workflows = []
+    if service is not None:
+        try:
+            workflows = service.list_workflows()
+        except Exception as e:  # noqa: BLE001
+            logger.warning(f"Failed to list workflows: {e}")
+
+    if media_type:
+        workflows = [
+            wf for wf in workflows
+            if wf.get("media_type") in (None, media_type)
+            or (media_type == "image" and str(wf.get("key", "")).split("/")[-1].startswith("image_"))
+            or (media_type == "video" and str(wf.get("key", "")).split("/")[-1].startswith("video_"))
+        ]
+
+    workflow_by_key = {wf["key"]: wf for wf in workflows if wf.get("key")}
+    if current_key and current_key not in workflow_by_key:
+        workflow_by_key[current_key] = {"key": current_key, "display_name": current_key}
+
+    options = [wf.get("display_name") or wf["key"] for wf in workflow_by_key.values()]
+    keys = [wf["key"] for wf in workflow_by_key.values()]
+    return options, keys
+
+
+def _render_tts_overrides(prefix: str, pixelle_video, config) -> tuple[dict, bool]:
+    """Render compact TTS override controls for history editing."""
+    current_mode = getattr(config, "tts_inference_mode", None) or "local"
+    tts_mode = st.radio(
+        tr("history.edit.tts_mode"),
+        ["local", "comfyui"],
+        horizontal=True,
+        index=0 if current_mode == "local" else 1,
+        format_func=lambda x: tr(f"tts.mode.{x}"),
+        key=f"{prefix}_tts_mode",
+    )
+
+    overrides = {"tts_inference_mode": tts_mode}
+    if tts_mode == "local":
+        voice_ids = [voice["id"] for voice in EDGE_TTS_VOICES]
+        current_voice = getattr(config, "voice_id", None) or "zh-CN-YunjianNeural"
+        if current_voice not in voice_ids:
+            voice_ids.insert(0, current_voice)
+        voice_options = [
+            get_voice_display_name(voice_id, tr, get_language())
+            for voice_id in voice_ids
+        ]
+        voice_display = st.selectbox(
+            tr("history.edit.voice"),
+            voice_options,
+            index=voice_ids.index(current_voice),
+            key=f"{prefix}_voice",
+        )
+        overrides["voice_id"] = voice_ids[voice_options.index(voice_display)]
+        overrides["tts_workflow"] = None
+        overrides["ref_audio"] = None
+        overrides["tts_speed"] = st.slider(
+            tr("history.edit.tts_speed"),
+            min_value=0.5,
+            max_value=2.0,
+            value=float(getattr(config, "tts_speed", None) or 1.2),
+            step=0.1,
+            format="%.1fx",
+            key=f"{prefix}_tts_speed",
+        )
+    else:
+        current_workflow = getattr(config, "tts_workflow", None) or ""
+        workflow_options, workflow_keys = _workflow_options(
+            getattr(pixelle_video, "tts", None),
+            current_workflow,
+        )
+        if workflow_options:
+            default_index = workflow_keys.index(current_workflow) if current_workflow in workflow_keys else 0
+            selected_workflow_display = st.selectbox(
+                tr("history.edit.tts_workflow"),
+                workflow_options,
+                index=default_index,
+                key=f"{prefix}_tts_workflow_select",
+                help=tr("history.edit.workflow_help"),
+            )
+            workflow_value = workflow_keys[workflow_options.index(selected_workflow_display)]
+        else:
+            workflow_value = st.text_input(
+                tr("history.edit.tts_workflow"),
+                value=current_workflow,
+                key=f"{prefix}_tts_workflow",
+                help=tr("history.edit.workflow_help"),
+            )
+        overrides["voice_id"] = None
+        overrides["tts_workflow"] = workflow_value.strip() or None
+        overrides["ref_audio"] = None
+        overrides["tts_speed"] = st.slider(
+            tr("history.edit.tts_speed"),
+            min_value=0.5,
+            max_value=2.0,
+            value=float(getattr(config, "tts_speed", None) or 1.2),
+            step=0.1,
+            format="%.1fx",
+            key=f"{prefix}_comfy_tts_speed",
+        )
+
+    persist = st.checkbox(
+        tr("history.edit.persist_overrides"),
+        value=False,
+        key=f"{prefix}_persist",
+    )
+    return overrides, persist
+
+
+def _render_media_overrides(prefix: str, pixelle_video, config) -> tuple[dict, bool]:
+    """Render compact media workflow override controls for one-frame regeneration."""
+    current_workflow = getattr(config, "media_workflow", None) or ""
+    options, keys = _workflow_options(getattr(pixelle_video, "media", None), current_workflow)
+    labels = [tr("history.edit.keep_current_workflow")]
+    values = [current_workflow]
+    labels.extend(options)
+    values.extend(keys)
+
+    default_index = values.index(current_workflow) if current_workflow in values else 0
+    selected = st.selectbox(
+        tr("history.edit.media_workflow"),
+        labels,
+        index=default_index,
+        key=f"{prefix}_media_workflow_select",
+    )
+    selected_workflow = values[labels.index(selected)]
+    persist = st.checkbox(
+        tr("history.edit.persist_media_overrides"),
+        value=False,
+        key=f"{prefix}_persist_media",
+    )
+    return {"media_workflow": selected_workflow or None}, persist
+
+
+def _render_template_replacement(prefix: str, config) -> str | None:
+    from pixelle_video.utils.template_util import (
+        get_template_type,
+        get_templates_grouped_by_size_and_type,
+    )
+
+    current_template = getattr(config, "frame_template", None) or ""
+    current_type = get_template_type(os.path.basename(current_template))
+    grouped_templates = get_templates_grouped_by_size_and_type(current_type)
+    template_options = []
+    template_values = []
+    for size, templates in grouped_templates.items():
+        for template in templates:
+            value = template.template_path
+            template_values.append(value)
+            template_options.append(f"{template.display_info.name} ({size})")
+
+    if not template_values:
+        st.warning(tr("history.edit.no_templates"))
+        return None
+
+    default_index = template_values.index(current_template) if current_template in template_values else 0
+    selected = st.selectbox(
+        tr("history.edit.frame_template"),
+        template_options,
+        index=default_index,
+        key=f"{prefix}_template_select",
+    )
+    selected_template = template_values[template_options.index(selected)]
+    st.caption(tr("history.edit.template_replace_hint", template_type=current_type))
+    return selected_template
+
+
+def _render_all_audio_progress_callback(prefix: str):
+    progress_bar = st.progress(0.0)
+    status = st.empty()
+
+    def _callback(event):
+        progress_bar.progress(event.progress)
+        if event.frame_current and event.frame_total:
+            status.caption(
+                tr(
+                    "history.edit.progress_frame",
+                    current=event.frame_current,
+                    total=event.frame_total,
+                )
+            )
+        elif event.extra_info == "completed":
+            status.caption(tr("history.edit.progress_completed"))
+        else:
+            status.caption(tr("history.edit.processing"))
+
+    return _callback
+
+
+def _is_streamlit_control_exception(error: BaseException) -> bool:
+    return error.__class__.__name__ in {"RerunException", "StopException"}
+
+
+def _is_task_edit_cancelled(error: BaseException) -> bool:
+    return error.__class__.__name__ == "TaskEditCancelled"
+
+
+def _run_edit_action(action, success_message: str, cancel_action=None):
+    """Run a history edit action and refresh the page on success."""
+    try:
+        result = run_async(action())
+        st.success(success_message)
+        if result and result.get("video_path"):
+            st.caption(result["video_path"])
+        st.rerun()
+    except BaseException as e:  # noqa: BLE001
+        if _is_streamlit_control_exception(e):
+            if cancel_action:
+                try:
+                    run_async(cancel_action())
+                except Exception as cancel_error:  # noqa: BLE001
+                    logger.warning(f"Failed to request edit cancellation: {cancel_error}")
+            raise
+        if _is_task_edit_cancelled(e):
+            st.warning(tr("history.edit.cancelled"))
+            return
+        if not isinstance(e, Exception):
+            raise
+        logger.exception(e)
+        st.error(tr("history.edit.failed", error=str(e)))
+
+
+def _ensure_history_edit_capabilities(pixelle_video):
+    """Repair cached Streamlit core objects that predate history edit methods."""
+    required_methods = (
+        "remove_bgm",
+        "update_bgm",
+        "regenerate_all_audio",
+        "regenerate_frame_audio",
+        "regenerate_frame_media",
+        "replace_template",
+        "request_cancel_edit",
+    )
+    history = getattr(pixelle_video, "history", None)
+    if history and all(hasattr(history, method) for method in required_methods):
+        return pixelle_video
+
+    try:
+        import pixelle_video.services.history_manager as history_manager_module
+        import pixelle_video.services.task_editor as task_editor_module
+
+        history_manager_module = importlib.reload(history_manager_module)
+        task_editor_module = importlib.reload(task_editor_module)
+        HistoryManager = history_manager_module.HistoryManager
+        TaskEditService = task_editor_module.TaskEditService
+
+        if getattr(pixelle_video, "persistence", None) is None:
+            return pixelle_video
+
+        pixelle_video.task_editor = TaskEditService(pixelle_video)
+        pixelle_video.history = HistoryManager(
+            pixelle_video.persistence,
+            task_editor=pixelle_video.task_editor,
+        )
+        logger.info("Repaired cached PixelleVideoCore history edit capabilities")
+    except Exception as e:  # noqa: BLE001
+        logger.warning(f"Failed to repair history edit capabilities: {e}")
+
+    return pixelle_video
 
 
 def render_sidebar_controls(pixelle_video):
@@ -208,8 +472,8 @@ def render_grid_task_card(task: dict, pixelle_video):
             st.video(video_path, autoplay=False, loop=False, muted=False)
         else:
             st.markdown(
-                f"<div style='background: #f0f0f0; height: 180px; display: flex; align-items: center; "
-                f"justify-content: center; border-radius: 4px; font-size: 48px;'>📹</div>",
+                "<div style='background: #f0f0f0; height: 180px; display: flex; align-items: center; "
+                "justify-content: center; border-radius: 4px; font-size: 48px;'>📹</div>",
                 unsafe_allow_html=True
             )
 
@@ -387,6 +651,68 @@ def render_task_detail_modal(task_id: str, pixelle_video):
                     # Audio player (compact)
                     if frame.audio_path and os.path.exists(frame.audio_path):
                         st.audio(frame.audio_path)
+
+                    st.divider()
+                    edited_narration = st.text_area(
+                        tr("history.edit.narration_label"),
+                        value=frame.narration or "",
+                        height=90,
+                        key=f"edit_narration_{task_id}_{frame.index}",
+                    )
+                    with st.expander(tr("history.edit.single_audio_options"), expanded=False):
+                        tts_overrides, persist_tts = _render_tts_overrides(
+                            f"frame_audio_{task_id}_{frame.index}",
+                            pixelle_video,
+                            storyboard.config,
+                        )
+                    if st.button(
+                        tr("history.edit.regenerate_frame_audio"),
+                        key=f"regenerate_audio_{task_id}_{frame.index}",
+                        use_container_width=True,
+                    ):
+                        with st.spinner(tr("history.edit.processing")):
+                            _run_edit_action(
+                                lambda: pixelle_video.history.regenerate_frame_audio(
+                                    task_id,
+                                    frame.index,
+                                    edited_narration,
+                                    tts_overrides=tts_overrides,
+                                    persist_overrides=persist_tts,
+                                ),
+                                tr("history.edit.success"),
+                            )
+
+                    if frame.image_prompt is not None:
+                        edited_prompt = st.text_area(
+                            tr("history.edit.image_prompt_label"),
+                            value=frame.image_prompt or "",
+                            height=100,
+                            key=f"edit_prompt_{task_id}_{frame.index}",
+                        )
+                        with st.expander(tr("history.edit.single_media_options"), expanded=False):
+                            media_overrides, persist_media = _render_media_overrides(
+                                f"frame_media_{task_id}_{frame.index}",
+                                pixelle_video,
+                                storyboard.config,
+                            )
+                        if st.button(
+                            tr("history.edit.regenerate_frame_media"),
+                            key=f"regenerate_media_{task_id}_{frame.index}",
+                            use_container_width=True,
+                        ):
+                            with st.spinner(tr("history.edit.processing")):
+                                _run_edit_action(
+                                    lambda: pixelle_video.history.regenerate_frame_media(
+                                        task_id,
+                                        frame.index,
+                                        edited_prompt,
+                                        media_overrides=media_overrides,
+                                        persist_overrides=persist_media,
+                                    ),
+                                    tr("history.edit.success"),
+                                )
+                    elif frame.image_source_index is not None:
+                        st.caption(tr("history.edit.media_child_hint"))
         else:
             st.info("No storyboard data")
     
@@ -403,6 +729,105 @@ def render_task_detail_modal(task_id: str, pixelle_video):
             st.markdown(f"**{tr('info.duration')}:** {format_duration(result.get('duration', 0))}")
             st.markdown(f"**{tr('info.frames')}:** {result.get('n_frames', 0)}")
             st.markdown(f"**{tr('info.file_size')}:** {format_file_size(result.get('file_size', 0))}")
+
+            with st.expander(tr("history.edit.final_video_tools"), expanded=False):
+                if storyboard:
+                    selected_template = _render_template_replacement(
+                        f"replace_template_{task_id}",
+                        storyboard.config,
+                    )
+                    if selected_template and st.button(
+                        tr("history.edit.replace_template"),
+                        key=f"replace_template_button_{task_id}",
+                        use_container_width=True,
+                    ):
+                        with st.spinner(tr("history.edit.processing")):
+                            _run_edit_action(
+                                lambda: pixelle_video.history.replace_template(
+                                    task_id,
+                                    selected_template,
+                                ),
+                                tr("history.edit.success"),
+                            )
+
+                if st.button(
+                    tr("history.edit.remove_bgm"),
+                    key=f"remove_bgm_{task_id}",
+                    use_container_width=True,
+                ):
+                    with st.spinner(tr("history.edit.processing")):
+                        _run_edit_action(
+                            lambda: pixelle_video.history.remove_bgm(task_id),
+                            tr("history.edit.success"),
+                        )
+
+                bgm_path = st.text_input(
+                    tr("history.edit.bgm_path"),
+                    value=metadata.get("input", {}).get("bgm_path") or "",
+                    key=f"edit_bgm_path_{task_id}",
+                )
+                bgm_volume = st.slider(
+                    tr("history.edit.bgm_volume"),
+                    min_value=0.0,
+                    max_value=1.0,
+                    value=float(metadata.get("input", {}).get("bgm_volume") or 0.2),
+                    step=0.05,
+                    key=f"edit_bgm_volume_{task_id}",
+                )
+                bgm_mode = st.selectbox(
+                    tr("history.edit.bgm_mode"),
+                    ["loop", "once"],
+                    index=0 if metadata.get("input", {}).get("bgm_mode", "loop") == "loop" else 1,
+                    key=f"edit_bgm_mode_{task_id}",
+                )
+                if st.button(
+                    tr("history.edit.apply_bgm"),
+                    key=f"apply_bgm_{task_id}",
+                    use_container_width=True,
+                ):
+                    with st.spinner(tr("history.edit.processing")):
+                        _run_edit_action(
+                            lambda: pixelle_video.history.update_bgm(
+                                task_id,
+                                bgm_path.strip() or None,
+                                bgm_volume=bgm_volume,
+                                bgm_mode=bgm_mode,
+                            ),
+                            tr("history.edit.success"),
+                        )
+
+            if storyboard:
+                with st.expander(tr("history.edit.all_audio_tools"), expanded=False):
+                    all_tts_overrides, _persist_unused = _render_tts_overrides(
+                        f"all_audio_{task_id}",
+                        pixelle_video,
+                        storyboard.config,
+                    )
+                    if st.button(
+                        tr("history.edit.request_cancel"),
+                        key=f"request_cancel_edit_{task_id}",
+                        use_container_width=True,
+                    ):
+                        run_async(pixelle_video.history.request_cancel_edit(task_id))
+                        st.warning(tr("history.edit.cancel_requested"))
+                    if st.button(
+                        tr("history.edit.regenerate_all_audio"),
+                        key=f"regenerate_all_audio_{task_id}",
+                        use_container_width=True,
+                    ):
+                        with st.spinner(tr("history.edit.processing")):
+                            progress_callback = _render_all_audio_progress_callback(
+                                f"all_audio_progress_{task_id}"
+                            )
+                            _run_edit_action(
+                                lambda: pixelle_video.history.regenerate_all_audio(
+                                    task_id,
+                                    all_tts_overrides,
+                                    progress_callback=progress_callback,
+                                ),
+                                tr("history.edit.success"),
+                                cancel_action=lambda: pixelle_video.history.request_cancel_edit(task_id),
+                            )
 
             # Download button
             with open(video_path, "rb") as f:
@@ -439,6 +864,7 @@ def main():
     
     # Initialize Pixelle-Video
     pixelle_video = get_pixelle_video()
+    pixelle_video = _ensure_history_edit_capabilities(pixelle_video)
     
     # Sidebar: Statistics + Filters
     filter_status, sort_by, sort_order, page_size = render_sidebar_controls(pixelle_video)

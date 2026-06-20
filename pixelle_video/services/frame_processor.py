@@ -20,15 +20,14 @@ Key Feature:
   to ensure perfect sync between audio and video (no padding, no trimming needed)
 """
 
-from typing import Callable, Optional
-
 import os
+from typing import Callable, Optional
 
 import httpx
 from loguru import logger
 
 from pixelle_video.models.progress import ProgressEvent
-from pixelle_video.models.storyboard import Storyboard, StoryboardFrame, StoryboardConfig
+from pixelle_video.models.storyboard import Storyboard, StoryboardConfig, StoryboardFrame
 from pixelle_video.utils.retry import with_retry
 
 
@@ -175,7 +174,7 @@ class FrameProcessor:
             else:
                 frame.image_path = None
                 frame.media_type = None
-                logger.debug(f"  2/4: Skipped media generation (not required by template)")
+                logger.debug("  2/4: Skipped media generation (not required by template)")
         
             # Step 3: Compose frame (add subtitle)
             if progress_callback:
@@ -235,6 +234,18 @@ class FrameProcessor:
                 tts_params["voice"] = config.voice_id
             if config.tts_speed is not None:
                 tts_params["speed"] = config.tts_speed
+        elif config.tts_inference_mode == "api":
+            # Direct provider mode: pass provider/model/voice_id and synthesis controls
+            if config.tts_provider:
+                tts_params["provider"] = config.tts_provider
+            if config.tts_model:
+                tts_params["model"] = config.tts_model
+            if config.tts_voice_id:
+                tts_params["voice_id"] = config.tts_voice_id
+            if config.tts_speed is not None:
+                tts_params["speed"] = config.tts_speed
+            if config.tts_volume is not None:
+                tts_params["volume"] = config.tts_volume
         else:  # comfyui
             # ComfyUI mode: pass workflow, voice, speed, and ref_audio
             if config.tts_workflow:
@@ -427,9 +438,6 @@ class FrameProcessor:
         # Resolve template path (handles various input formats)
         template_path = resolve_template_path(config.frame_template)
         
-        # Get content metadata from storyboard
-        content_metadata = storyboard.content_metadata if storyboard else None
-        
         # Build ext data
         ext = {
             "index": frame.index + 1,
@@ -474,7 +482,7 @@ class FrameProcessor:
         # Branch based on media type
         if frame.media_type == "video":
             # Video workflow: overlay HTML template on video, then add audio
-            logger.debug(f"  → Using video-based composition with HTML overlay")
+            logger.debug("  → Using video-based composition with HTML overlay")
             
             # Step 1: Overlay transparent HTML image on video
             # The composed_image_path contains the rendered HTML with transparent background
@@ -504,7 +512,7 @@ class FrameProcessor:
         elif frame.media_type == "image" or frame.media_type is None:
             # Image workflow: Use composed image directly
             # The asset_default.html template includes the image in the composition
-            logger.debug(f"  → Using image-based composition")
+            logger.debug("  → Using image-based composition")
             
             segment_path = video_service.create_video_from_image(
                 image=frame.composed_image_path,

@@ -164,8 +164,28 @@ class HistoryManager:
             logger.warning(f"Task {task_id} not found for duplication")
             return None
         
-        # Extract input parameters
-        input_params = metadata.get("input", {})
+        # Extract input parameters and refresh task-level options from storyboard.
+        # Older metadata may not contain fields added after the task was generated.
+        input_params = dict(metadata.get("input", {}))
+        storyboard = await self.persistence.load_storyboard(task_id)
+        config = getattr(storyboard, "config", None)
+        if config is not None:
+            for key in (
+                "tts_inference_mode",
+                "voice_id",
+                "tts_workflow",
+                "tts_speed",
+                "tts_volume",
+                "tts_provider",
+                "tts_model",
+                "tts_voice_id",
+                "ref_audio",
+                "media_workflow",
+                "frame_template",
+            ):
+                value = getattr(config, key, None)
+                if value is not None:
+                    input_params[key] = value
         logger.info(f"Duplicated task {task_id} parameters")
         
         return input_params

@@ -14,18 +14,19 @@
 Style configuration components for web UI (middle column)
 """
 
-import os
 import base64
+import os
 from pathlib import Path
 
 import streamlit as st
 from loguru import logger
 
-from web.i18n import tr, get_language
+from pixelle_video.config import config_manager
+from web.i18n import get_language, tr
+from web.pipelines.api_workflows import list_api_media_workflows, render_api_video_controls
 from web.utils.async_helpers import run_async
 from web.utils.streamlit_helpers import check_and_warn_selfhost_workflow
-from web.pipelines.api_workflows import list_api_media_workflows, render_api_video_controls
-from pixelle_video.config import config_manager
+from web.utils.tts_models_config import get_tts_models_config, set_default_tts_voice
 
 
 def is_api_workflow(workflow_key: str | None) -> bool:
@@ -50,21 +51,36 @@ def render_style_config(pixelle_video):
         comfyui_config = config_manager.get_comfyui_config()
         tts_config = comfyui_config["tts"]
         
+        mode_options = ["local", "comfyui", "api"]
+        saved_mode = tts_config.get("inference_mode", "local")
+        default_mode_index = mode_options.index(saved_mode) if saved_mode in mode_options else 0
+
         # Inference mode selection
         tts_mode = st.radio(
             tr("tts.inference_mode"),
-            ["local", "comfyui"],
+            mode_options,
             horizontal=True,
             format_func=lambda x: tr(f"tts.mode.{x}"),
-            index=0 if tts_config.get("inference_mode", "local") == "local" else 1,
+            index=default_mode_index,
             key="tts_inference_mode"
         )
+
+        selected_voice = None
+        tts_speed = None
+        tts_volume = None
+        tts_provider = None
+        tts_model = None
+        tts_voice_id = None
+        tts_workflow_key = None
+        ref_audio_path = None
         
         # Show hint based on mode
         if tts_mode == "local":
             st.caption(tr("tts.mode.local_hint"))
-        else:
+        elif tts_mode == "comfyui":
             st.caption(tr("tts.mode.comfyui_hint"))
+        else:
+            st.caption(tr("tts.mode.api_hint"))
         
         # ================================================================
         # Local Mode UI
@@ -122,14 +138,10 @@ def render_style_config(pixelle_video):
                 )
                 st.caption(tr("tts.speed_label", speed=f"{tts_speed:.1f}"))
             
-            # Variables for video generation
-            tts_workflow_key = None
-            ref_audio_path = None
-        
         # ================================================================
         # ComfyUI Mode UI
         # ================================================================
-        else:  # comfyui mode
+        elif tts_mode == "comfyui":
             # Get available TTS workflows
             tts_workflows = pixelle_video.tts.list_workflows()
             
@@ -181,10 +193,166 @@ def render_style_config(pixelle_video):
                 ref_audio_path = temp_dir / f"ref_audio_{ref_audio_file.name}"
                 with open(ref_audio_path, "wb") as f:
                     f.write(ref_audio_file.getbuffer())
-            
-            # Variables for video generation
-            selected_voice = None
-            tts_speed = None
+        # ================================================================
+        # Direct API Mode UI
+        # ================================================================
+        else:
+            zh = get_language() == "zh_CN"
+            tts_models_config = get_tts_models_config(config_manager)
+            provider_configs = tts_models_config.get("providers", {}) or {}
+            minimax_config = provider_configs.get("minimax", {})
+            tts_provider = "minimax"
+            tts_model = (
+                minimax_config.get("default_model")
+                or tts_models_config.get("default_model")
+                or "speech-2.8-turbo"
+            )
+
+            if not minimax_config.get("api_key"):
+                st.warning(
+                    "请先在系统配置 > API 配音模型中配置 MiniMax API Key。"
+                    if zh
+                    else "Please configure the MiniMax API Key in System Configuration > API TTS Models first."
+                )
+
+            voice_type_labels = {
+                "system": "系统音色" if zh else "System voices",
+                "voice_cloning": "克隆音色" if zh else "Cloned voices",
+                "voice_generation": "文生音色" if zh else "Generated voices",
+            }
+            tts_voice_id = minimax_config.get("default_voice_id")
+            default_voice_type = minimax_config.get("default_voice_type")
+            if tts_voice_id:
+                st.success(
+                    f"当前默认音色：{tts_voice_id}"
+                    if zh
+                    else f"Current default voice: {tts_voice_id}"
+                )
+                if default_voice_type:
+                    st.caption(
+                        f"音色类型：{voice_type_labels.get(default_voice_type, default_voice_type)}"
+                        if zh
+                        else f"Voice type: {voice_type_labels.get(default_voice_type, default_voice_type)}"
+                    )
+
+            st.info(
+                f"MiniMax 模型：{tts_model}（在系统配置中修改）"
+                if zh
+                else f"MiniMax model: {tts_model} (change it in System Configuration)"
+            )
+
+            speed_col, volume_col = st.columns(2)
+            with speed_col:
+                tts_speed = st.slider(
+                    tr("tts.speed"),
+                    min_value=0.5,
+                    max_value=2.0,
+                    value=1.0,
+                    step=0.1,
+                    format="%.1fx",
+                    key="tts_api_speed",
+                )
+            with volume_col:
+                tts_volume = st.slider(
+                    "音量" if zh else "Volume",
+                    min_value=0.0,
+                    max_value=2.0,
+                    value=1.0,
+                    step=0.1,
+                    format="%.1fx",
+                    key="tts_api_volume",
+                )
+
+            fetch_label = (
+                "刷新/更换 MiniMax 音色" if tts_voice_id else "拉取 MiniMax 音色"
+            ) if zh else (
+                "Refresh/change MiniMax voice" if tts_voice_id else "Fetch MiniMax voices"
+            )
+            if st.button(
+                fetch_label,
+                key="tts_api_fetch_minimax_voices",
+                use_container_width=True,
+                disabled=not bool(minimax_config.get("api_key")),
+            ):
+                try:
+                    from pixelle_video.services.api_services.tts_minimax import MiniMaxTTSClient
+
+                    client = MiniMaxTTSClient(
+                        api_key=minimax_config.get("api_key", ""),
+                        base_url=minimax_config.get("base_url") or "https://api.minimaxi.com",
+                    )
+                    st.session_state["tts_minimax_voices"] = run_async(client.list_voices())
+                    st.success("音色列表已更新" if zh else "Voice list updated")
+                except Exception as e:
+                    st.error(f"{'拉取音色失败' if zh else 'Failed to fetch voices'}: {e}")
+
+            voices = st.session_state.get("tts_minimax_voices") or {}
+            available_types = [key for key in voice_type_labels if voices.get(key)]
+            if available_types:
+                default_type_index = (
+                    available_types.index(default_voice_type)
+                    if default_voice_type in available_types
+                    else 0
+                )
+                selected_voice_type = st.selectbox(
+                    "音色类型" if zh else "Voice type",
+                    available_types,
+                    index=default_type_index,
+                    format_func=lambda key: voice_type_labels[key],
+                    key="tts_api_voice_type",
+                )
+                voice_items = voices.get(selected_voice_type, [])
+
+                def _voice_label(item):
+                    label = item.get("display_name") or item.get("voice_id", "")
+                    voice_id = item.get("voice_id", "")
+                    created_time = item.get("created_time")
+                    if created_time:
+                        return f"{label} ({voice_id}, {created_time})"
+                    if label != voice_id:
+                        return f"{label} ({voice_id})"
+                    return voice_id
+
+                default_voice_index = 0
+                if tts_voice_id:
+                    for idx, item in enumerate(voice_items):
+                        if item.get("voice_id") == tts_voice_id:
+                            default_voice_index = idx
+                            break
+
+                selected_voice_item = st.selectbox(
+                    tr("tts.voice_selector"),
+                    voice_items,
+                    index=default_voice_index,
+                    format_func=_voice_label,
+                    key="tts_api_voice_select",
+                )
+                if selected_voice_item:
+                    tts_voice_id = selected_voice_item.get("voice_id")
+                    st.caption(f"voice_id: {tts_voice_id}")
+                    if st.button(
+                        "设为默认音色" if zh else "Set as default voice",
+                        key="tts_api_set_default_voice",
+                        use_container_width=True,
+                    ):
+                        set_default_tts_voice(
+                            config_manager,
+                            provider="minimax",
+                            voice_id=tts_voice_id,
+                            voice_type=selected_voice_type,
+                        )
+                        st.success("已保存为默认音色" if zh else "Saved as default voice")
+                        st.rerun()
+            else:
+                st.info(
+                    "如需更换音色，点击“刷新/更换 MiniMax 音色”。"
+                    if tts_voice_id and zh else
+                    "Click 'Refresh/change MiniMax voice' to change voices."
+                    if tts_voice_id else
+                    "点击“拉取 MiniMax 音色”后选择 voice_id。"
+                    if zh
+                    else "Click 'Fetch MiniMax voices' to select a voice_id."
+                )
         
         # ================================================================
         # TTS Preview (works for both modes)
@@ -211,10 +379,23 @@ def render_style_config(pixelle_video):
                         if tts_mode == "local":
                             tts_params["voice"] = selected_voice
                             tts_params["speed"] = tts_speed
-                        else:  # comfyui
+                        elif tts_mode == "comfyui":
                             tts_params["workflow"] = tts_workflow_key
                             if ref_audio_path:
                                 tts_params["ref_audio"] = str(ref_audio_path)
+                        else:
+                            if not tts_voice_id:
+                                st.error(
+                                    "请先拉取并选择 MiniMax 音色。"
+                                    if get_language() == "zh_CN"
+                                    else "Please fetch and select a MiniMax voice first."
+                                )
+                                st.stop()
+                            tts_params["provider"] = tts_provider
+                            tts_params["model"] = tts_model
+                            tts_params["voice_id"] = tts_voice_id
+                            tts_params["speed"] = tts_speed
+                            tts_params["volume"] = tts_volume
                         
                         audio_path = run_async(pixelle_video.tts(**tts_params))
                         
@@ -292,7 +473,10 @@ def render_style_config(pixelle_video):
         current_lang = get_language()
         
         # Import template utilities
-        from pixelle_video.utils.template_util import get_templates_grouped_by_size_and_type, get_template_type
+        from pixelle_video.utils.template_util import (
+            get_template_type,
+            get_templates_grouped_by_size_and_type,
+        )
         
         # Template type selector
         st.markdown(f"**{tr('template.type_selector')}**")
@@ -505,6 +689,7 @@ def render_style_config(pixelle_video):
         
         # Custom template parameters (for video generation)
         from pixelle_video.services.frame_html import HTMLFrameGenerator
+
         # Resolve template path to support both data/templates/ and templates/
         from pixelle_video.utils.template_util import resolve_template_path
         template_path_for_params = resolve_template_path(frame_template)
@@ -517,7 +702,6 @@ def render_style_config(pixelle_video):
         st.session_state['template_media_height'] = media_height
         
         # Detect template media type
-        from pixelle_video.utils.template_util import get_template_type
         
         template_name = Path(frame_template).name
         template_media_type = get_template_type(template_name)
@@ -959,7 +1143,11 @@ def render_style_config(pixelle_video):
     return {
         "tts_inference_mode": tts_mode,
         "tts_voice": selected_voice if tts_mode == "local" else None,
-        "tts_speed": tts_speed if tts_mode == "local" else None,
+        "tts_speed": tts_speed if tts_mode in ("local", "api") else None,
+        "tts_volume": tts_volume if tts_mode == "api" else None,
+        "tts_provider": tts_provider if tts_mode == "api" else None,
+        "tts_model": tts_model if tts_mode == "api" else None,
+        "tts_voice_id": tts_voice_id if tts_mode == "api" else None,
         "tts_workflow": tts_workflow_key if tts_mode == "comfyui" else None,
         "ref_audio": str(ref_audio_path) if ref_audio_path else None,
         "frame_template": frame_template,

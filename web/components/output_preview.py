@@ -14,17 +14,15 @@
 Output preview components for web UI (right column)
 """
 
-import base64
 import os
-from pathlib import Path
 
 import streamlit as st
 from loguru import logger
 
-from web.i18n import tr, get_language
-from web.utils.async_helpers import run_async
-from pixelle_video.models.progress import ProgressEvent
 from pixelle_video.config import config_manager
+from pixelle_video.models.progress import ProgressEvent
+from web.i18n import get_language, tr
+from web.utils.async_helpers import run_async
 
 
 def render_output_preview(pixelle_video, video_params):
@@ -68,6 +66,10 @@ def render_single_output(pixelle_video, video_params):
     tts_mode = video_params.get("tts_inference_mode", "local")
     selected_voice = video_params.get("tts_voice")
     tts_speed = video_params.get("tts_speed")
+    tts_volume = video_params.get("tts_volume")
+    tts_provider = video_params.get("tts_provider")
+    tts_model = video_params.get("tts_model")
+    tts_voice_id = video_params.get("tts_voice_id")
     tts_workflow_key = video_params.get("tts_workflow")
     ref_audio_path = video_params.get("ref_audio")
     
@@ -207,10 +209,23 @@ def render_single_output(pixelle_video, video_params):
                 if tts_mode == "local":
                     gen_params["tts_voice"] = selected_voice
                     gen_params["tts_speed"] = tts_speed
-                else:  # comfyui
+                elif tts_mode == "comfyui":
                     gen_params["tts_workflow"] = tts_workflow_key
                     if ref_audio_path:
                         gen_params["ref_audio"] = str(ref_audio_path)
+                elif tts_mode == "api":
+                    if not tts_voice_id:
+                        st.error(
+                            "请先拉取并选择 MiniMax 音色。"
+                            if get_language() == "zh_CN"
+                            else "Please fetch and select a MiniMax voice first."
+                        )
+                        st.stop()
+                    gen_params["tts_provider"] = tts_provider
+                    gen_params["tts_model"] = tts_model
+                    gen_params["tts_voice_id"] = tts_voice_id
+                    gen_params["tts_speed"] = tts_speed
+                    gen_params["tts_volume"] = tts_volume
                 
                 # Add custom template parameters if any
                 if custom_values_for_video:
@@ -233,7 +248,10 @@ def render_single_output(pixelle_video, video_params):
                 file_size_mb = result.file_size / (1024 * 1024)
                 
                 # Parse video size from template path
-                from pixelle_video.utils.template_util import parse_template_size, resolve_template_path
+                from pixelle_video.utils.template_util import (
+                    parse_template_size,
+                    resolve_template_path,
+                )
                 template_path = resolve_template_path(result.storyboard.config.frame_template)
                 video_width, video_height = parse_template_size(template_path)
                 
@@ -467,8 +485,9 @@ def render_batch_output(pixelle_video, video_params):
                 return callback
             
             # Execute batch generation
-            from web.utils.batch_manager import SimpleBatchManager
             import time
+
+            from web.utils.batch_manager import SimpleBatchManager
             
             batch_manager = SimpleBatchManager()
             start_time = time.time()

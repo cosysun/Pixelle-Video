@@ -34,6 +34,7 @@ from web.components.header import render_header  # noqa: E402
 from web.i18n import get_language, tr  # noqa: E402
 from web.state.session import get_pixelle_video, init_i18n, init_session_state  # noqa: E402
 from web.utils.async_helpers import run_async  # noqa: E402
+from web.utils.tts_models_config import get_tts_models_config  # noqa: E402
 
 # Page config
 st.set_page_config(
@@ -114,11 +115,12 @@ def _workflow_options(service, current_key: str | None = None, media_type: str |
 def _render_tts_overrides(prefix: str, pixelle_video, config) -> tuple[dict, bool]:
     """Render compact TTS override controls for history editing."""
     current_mode = getattr(config, "tts_inference_mode", None) or "local"
+    mode_options = ["local", "comfyui", "api"]
     tts_mode = st.radio(
         tr("history.edit.tts_mode"),
-        ["local", "comfyui"],
+        mode_options,
         horizontal=True,
-        index=0 if current_mode == "local" else 1,
+        index=mode_options.index(current_mode) if current_mode in mode_options else 0,
         format_func=lambda x: tr(f"tts.mode.{x}"),
         key=f"{prefix}_tts_mode",
     )
@@ -151,7 +153,11 @@ def _render_tts_overrides(prefix: str, pixelle_video, config) -> tuple[dict, boo
             format="%.1fx",
             key=f"{prefix}_tts_speed",
         )
-    else:
+        overrides["tts_provider"] = None
+        overrides["tts_model"] = None
+        overrides["tts_voice_id"] = None
+        overrides["tts_volume"] = None
+    elif tts_mode == "comfyui":
         current_workflow = getattr(config, "tts_workflow", None) or ""
         workflow_options, workflow_keys = _workflow_options(
             getattr(pixelle_video, "tts", None),
@@ -177,6 +183,10 @@ def _render_tts_overrides(prefix: str, pixelle_video, config) -> tuple[dict, boo
         overrides["voice_id"] = None
         overrides["tts_workflow"] = workflow_value.strip() or None
         overrides["ref_audio"] = None
+        overrides["tts_provider"] = None
+        overrides["tts_model"] = None
+        overrides["tts_voice_id"] = None
+        overrides["tts_volume"] = None
         overrides["tts_speed"] = st.slider(
             tr("history.edit.tts_speed"),
             min_value=0.5,
@@ -185,6 +195,59 @@ def _render_tts_overrides(prefix: str, pixelle_video, config) -> tuple[dict, boo
             step=0.1,
             format="%.1fx",
             key=f"{prefix}_comfy_tts_speed",
+        )
+    else:
+        from pixelle_video.config import config_manager
+
+        zh = get_language() == "zh_CN"
+        tts_models_config = get_tts_models_config(config_manager)
+        minimax_config = (tts_models_config.get("providers", {}) or {}).get("minimax", {})
+        provider = getattr(config, "tts_provider", None) or "minimax"
+        model = (
+            getattr(config, "tts_model", None)
+            or minimax_config.get("default_model")
+            or tts_models_config.get("default_model")
+            or "speech-2.8-turbo"
+        )
+        current_voice_id = (
+            getattr(config, "tts_voice_id", None)
+            or minimax_config.get("default_voice_id")
+            or ""
+        )
+
+        st.caption(
+            f"MiniMax 模型：{model}"
+            if zh
+            else f"MiniMax model: {model}"
+        )
+        voice_id = st.text_input(
+            "MiniMax voice_id" if zh else "MiniMax voice_id",
+            value=current_voice_id,
+            key=f"{prefix}_api_voice_id",
+        ).strip()
+        overrides["voice_id"] = None
+        overrides["tts_workflow"] = None
+        overrides["ref_audio"] = None
+        overrides["tts_provider"] = provider
+        overrides["tts_model"] = model
+        overrides["tts_voice_id"] = voice_id or None
+        overrides["tts_speed"] = st.slider(
+            tr("history.edit.tts_speed"),
+            min_value=0.5,
+            max_value=2.0,
+            value=float(getattr(config, "tts_speed", None) or 1.0),
+            step=0.1,
+            format="%.1fx",
+            key=f"{prefix}_api_tts_speed",
+        )
+        overrides["tts_volume"] = st.slider(
+            "音量" if zh else "Volume",
+            min_value=0.0,
+            max_value=2.0,
+            value=float(getattr(config, "tts_volume", None) or 1.0),
+            step=0.1,
+            format="%.1fx",
+            key=f"{prefix}_api_tts_volume",
         )
 
     persist = st.checkbox(

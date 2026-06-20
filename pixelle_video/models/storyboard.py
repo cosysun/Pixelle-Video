@@ -16,7 +16,7 @@ Storyboard data models for video generation
 
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import List, Optional, Dict, Any
+from typing import Any, Dict, List, Optional
 
 
 @dataclass
@@ -40,10 +40,15 @@ class StoryboardConfig:
     video_fps: int = 30                        # Frame rate
     
     # Audio parameters
-    tts_inference_mode: str = "local"          # TTS inference mode: "local" or "comfyui"
+    tts_inference_mode: str = "local"          # TTS inference mode: "local", "comfyui", or "api"
     voice_id: Optional[str] = None             # Voice ID (for local: Edge TTS voice ID; for comfyui: workflow-specific)
     tts_workflow: Optional[str] = None         # TTS workflow filename (for ComfyUI mode, None = use default)
     tts_speed: Optional[float] = None          # TTS speed multiplier (0.5-2.0, 1.0 = normal)
+    tts_volume: Optional[float] = None         # TTS volume multiplier (provider-specific)
+    tts_provider: Optional[str] = None         # Third-party TTS provider (api mode)
+    tts_model: Optional[str] = None            # Third-party TTS model (api mode)
+    tts_voice_id: Optional[str] = None         # Third-party TTS voice_id (api mode)
+    tts_audio_repair_enabled: bool = False     # Whether audio repair is enabled for TTS workflows
     ref_audio: Optional[str] = None            # Reference audio for voice cloning (ComfyUI mode only)
     
     # Media workflow

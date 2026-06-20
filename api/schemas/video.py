@@ -14,7 +14,8 @@
 Video generation API schemas
 """
 
-from typing import Optional, Literal, Dict, Any
+from typing import Any, Dict, Literal, Optional
+
 from pydantic import BaseModel, Field
 
 ContentStyle = Literal["general", "tech_pop"]
@@ -43,6 +44,15 @@ class VideoGenerateRequest(BaseModel):
     )
     
     # === TTS Parameters ===
+    tts_inference_mode: Optional[Literal["local", "comfyui", "api"]] = Field(
+        None,
+        description="TTS inference mode: local, comfyui, or api"
+    )
+    tts_provider: Optional[str] = Field(None, description="Third-party TTS provider, e.g. minimax")
+    tts_model: Optional[str] = Field(None, description="Third-party TTS model")
+    tts_voice_id: Optional[str] = Field(None, description="Third-party provider voice_id")
+    tts_speed: Optional[float] = Field(None, ge=0.5, le=2.0, description="TTS speed multiplier")
+    tts_volume: Optional[float] = Field(None, ge=0.0, le=2.0, description="TTS volume multiplier")
     tts_workflow: Optional[str] = Field(
         None, 
         description="TTS workflow key (e.g., 'runninghub/tts_edge.json'). If not specified, uses default workflow from config."

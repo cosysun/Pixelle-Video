@@ -14,13 +14,20 @@
 TTS API schemas
 """
 
-from typing import Optional
+from typing import Literal, Optional
+
 from pydantic import BaseModel, Field
 
 
 class TTSSynthesizeRequest(BaseModel):
     """TTS synthesis request"""
     text: str = Field(..., description="Text to synthesize")
+    inference_mode: Optional[Literal["local", "comfyui", "api"]] = Field(
+        None,
+        description="TTS inference mode. Use 'api' for MiniMax direct synthesis."
+    )
+    provider: Optional[str] = Field(None, description="Third-party TTS provider, e.g. 'minimax'")
+    model: Optional[str] = Field(None, description="Third-party TTS model, e.g. 'speech-2.8-turbo'")
     workflow: Optional[str] = Field(
         None, 
         description="TTS workflow key (e.g., 'runninghub/tts_edge.json' or 'selfhost/tts_edge.json'). If not specified, uses default workflow from config."
@@ -31,15 +38,19 @@ class TTSSynthesizeRequest(BaseModel):
     )
     voice_id: Optional[str] = Field(
         None, 
-        description="Voice ID (deprecated, use workflow instead)"
+        description="Voice ID. For API TTS mode this is the provider voice_id."
     )
+    speed: Optional[float] = Field(None, ge=0.5, le=2.0, description="Speech speed multiplier")
+    volume: Optional[float] = Field(None, ge=0.0, le=2.0, description="Speech volume multiplier")
     
     class Config:
         json_schema_extra = {
             "example": {
                 "text": "Hello, welcome to Pixelle-Video!",
-                "workflow": "runninghub/tts_edge.json",
-                "ref_audio": None
+                "inference_mode": "api",
+                "provider": "minimax",
+                "model": "speech-2.8-turbo",
+                "voice_id": "your_minimax_voice_id"
             }
         }
 

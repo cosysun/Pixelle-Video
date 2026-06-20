@@ -16,9 +16,10 @@ System settings component for web UI
 
 import streamlit as st
 
-from web.i18n import tr, get_language
-from web.utils.streamlit_helpers import safe_rerun
 from pixelle_video.config import config_manager
+from web.i18n import get_language, tr
+from web.utils.streamlit_helpers import safe_rerun
+from web.utils.tts_models_config import get_tts_models_config, set_tts_models_config
 
 
 def render_advanced_settings():
@@ -39,7 +40,11 @@ def render_advanced_settings():
                 st.markdown(f"**{tr('settings.llm.title')}**")
                 
                 # Quick preset selection
-                from pixelle_video.llm_presets import get_preset_names, get_preset, find_preset_by_base_url_and_model
+                from pixelle_video.llm_presets import (
+                    find_preset_by_base_url_and_model,
+                    get_preset,
+                    get_preset_names,
+                )
                 
                 # Custom at the end
                 preset_names = get_preset_names() + ["Custom"]
@@ -447,6 +452,87 @@ def render_advanced_settings():
                     type="password",
                     key="api_media_kling_secret_key",
                 )
+
+        # ====================================================================
+        # Direct API TTS providers
+        # ====================================================================
+        tts_models_cfg = get_tts_models_config(config_manager)
+        tts_minimax_cfg = (tts_models_cfg.get("providers", {}) or {}).get("minimax", {})
+        minimax_model_options = [
+            "speech-2.8-turbo",
+            "speech-2.8-hd",
+            "speech-2.6-turbo",
+            "speech-2.6-hd",
+            "speech-02-turbo",
+            "speech-02-hd",
+        ]
+        current_tts_model = (
+            tts_minimax_cfg.get("default_model")
+            or tts_models_cfg.get("default_model")
+            or "speech-2.8-turbo"
+        )
+        default_tts_model_index = (
+            minimax_model_options.index(current_tts_model)
+            if current_tts_model in minimax_model_options
+            else 0
+        )
+
+        with st.container(border=True):
+            st.markdown("**🎙️ API 配音模型**" if zh else "**🎙️ API TTS Models**")
+            st.caption(
+                "用于第三方接口配音合成。第一期支持 MiniMax，首页创作页只会读取这里的密钥和默认模型。"
+                if zh
+                else "Used for third-party TTS synthesis. The first phase supports MiniMax; the creation page only reads credentials and defaults from here."
+            )
+
+            tts_col1, tts_col2 = st.columns(2)
+            with tts_col1:
+                api_tts_provider = st.selectbox(
+                    "供应商" if zh else "Provider",
+                    options=["minimax"],
+                    index=0,
+                    key="api_tts_provider_select",
+                )
+                minimax_api_key = st.text_input(
+                    "MiniMax API Key",
+                    value=tts_minimax_cfg.get("api_key", ""),
+                    type="password",
+                    key="api_tts_minimax_key",
+                )
+            with tts_col2:
+                minimax_base_url = st.text_input(
+                    "MiniMax Base URL",
+                    value=tts_minimax_cfg.get("base_url") or "https://api.minimaxi.com",
+                    key="api_tts_minimax_base_url",
+                )
+                minimax_default_model = st.selectbox(
+                    "默认语音模型" if zh else "Default speech model",
+                    options=minimax_model_options,
+                    index=default_tts_model_index,
+                    key="api_tts_minimax_default_model",
+                )
+
+            if st.button("测试拉取音色" if zh else "Test voice list", key="api_tts_test_minimax", use_container_width=True):
+                if not minimax_api_key:
+                    st.warning("请先填写 MiniMax API Key" if zh else "Please enter a MiniMax API Key first")
+                else:
+                    try:
+                        from pixelle_video.services.api_services.tts_minimax import MiniMaxTTSClient
+                        from web.utils.async_helpers import run_async
+
+                        client = MiniMaxTTSClient(
+                            api_key=minimax_api_key,
+                            base_url=minimax_base_url or "https://api.minimaxi.com",
+                        )
+                        voices = run_async(client.list_voices())
+                        count = sum(len(items) for items in voices.values())
+                        st.success(
+                            f"连接成功，获取到 {count} 个音色"
+                            if zh
+                            else f"Connection successful, fetched {count} voices"
+                        )
+                    except Exception as e:
+                        st.error(f"{'拉取失败' if zh else 'Failed to fetch voices'}: {e}")
         
         # ====================================================================
         # Action Buttons (full width at bottom)
@@ -505,10 +591,27 @@ def render_advanced_settings():
                         "base_url": api_gemini_base_url or "",
                         "use_proxy": bool(api_gemini_use_proxy),
                     })
+
+                    tts_provider_config = {
+                        "api_key": minimax_api_key or "",
+                        "base_url": minimax_base_url or "https://api.minimaxi.com",
+                        "default_model": minimax_default_model,
+                        "default_voice_id": tts_minimax_cfg.get("default_voice_id"),
+                        "default_voice_type": tts_minimax_cfg.get("default_voice_type"),
+                    }
                     
                     # Only save to file if LLM config is valid
                     if llm_api_key and llm_base_url and llm_model:
                         config_manager.save()
+                        # Save after config_manager.save so stale Streamlit singletons
+                        # cannot overwrite the new tts_models section.
+                        set_tts_models_config(
+                            config_manager,
+                            default_provider=api_tts_provider,
+                            default_model=minimax_default_model,
+                            provider="minimax",
+                            provider_config=tts_provider_config,
+                        )
                         st.success(tr("status.config_saved"))
                         safe_rerun()
                 except Exception as e:

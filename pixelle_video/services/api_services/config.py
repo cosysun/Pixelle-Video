@@ -19,6 +19,21 @@ def _provider_config(provider: str) -> dict:
         return {}
 
 
+def _tts_provider_config(provider: str) -> dict:
+    try:
+        from pixelle_video.config import config_manager
+
+        config = config_manager.config.to_dict()
+        return (
+            config.get("tts_models", {})
+            .get("providers", {})
+            .get(provider, {})
+            or {}
+        )
+    except Exception:
+        return {}
+
+
 class _ConfigMeta(type):
     def __getattr__(cls, name: str) -> Any:
         mapping = {
@@ -38,6 +53,18 @@ class _ConfigMeta(type):
             "KLING_ACCESS_KEY": ("kling", "access_key", ""),
             "KLING_SECRET_KEY": ("kling", "secret_key", ""),
         }
+        tts_mapping = {
+            "MINIMAX_API_KEY": ("minimax", "api_key", ""),
+            "MINIMAX_BASE_URL": ("minimax", "base_url", "https://api.minimaxi.com"),
+        }
+
+        if name in tts_mapping:
+            provider, key, default = tts_mapping[name]
+            value = _tts_provider_config(provider).get(key, default)
+            env_value = os.getenv(name)
+            if env_value is not None and env_value != "":
+                return env_value
+            return value
 
         if name not in mapping:
             raise AttributeError(name)

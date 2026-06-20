@@ -63,6 +63,17 @@ async def tts_synthesize(
         
         # Build TTS parameters
         tts_params = {"text": request.text}
+
+        if request.inference_mode:
+            tts_params["inference_mode"] = request.inference_mode
+        if request.provider:
+            tts_params["provider"] = request.provider
+        if request.model:
+            tts_params["model"] = request.model
+        if request.speed is not None:
+            tts_params["speed"] = request.speed
+        if request.volume is not None:
+            tts_params["volume"] = request.volume
         
         # Add workflow if specified
         if request.workflow:
@@ -72,10 +83,12 @@ async def tts_synthesize(
         if request.ref_audio:
             tts_params["ref_audio"] = request.ref_audio
         
-        # Legacy voice_id support (deprecated)
-        if request.voice_id and not request.workflow:
-            logger.warning("voice_id parameter is deprecated, please use workflow instead")
-            tts_params["voice"] = request.voice_id
+        if request.voice_id:
+            if request.inference_mode == "api":
+                tts_params["voice_id"] = request.voice_id
+            elif not request.workflow:
+                logger.warning("voice_id parameter is deprecated for ComfyUI/local, please use workflow or voice instead")
+                tts_params["voice"] = request.voice_id
         
         # Call TTS service
         audio_path = await pixelle_video.tts(**tts_params)

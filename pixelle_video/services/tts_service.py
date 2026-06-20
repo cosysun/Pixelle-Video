@@ -14,17 +14,17 @@
 TTS (Text-to-Speech) Service - Supports both local and ComfyUI inference
 """
 
-import os
 import uuid
 from pathlib import Path
 from typing import Optional
 
-from comfykit import ComfyKit
 from loguru import logger
 
+from pixelle_video.config import config_manager
+from pixelle_video.services.api_services.tts_client import TTSClient
 from pixelle_video.services.comfy_base_service import ComfyBaseService
-from pixelle_video.utils.tts_util import edge_tts
 from pixelle_video.tts_voices import speed_to_rate
+from pixelle_video.utils.tts_util import edge_tts
 
 
 class TTSService(ComfyBaseService):
@@ -59,6 +59,7 @@ class TTSService(ComfyBaseService):
             config: Full application config dict
             core: PixelleVideoCore instance (for accessing shared ComfyKit)
         """
+        self.full_config = config
         super().__init__(config, service_name="tts", core=core)
     
     
@@ -122,6 +123,14 @@ class TTSService(ComfyBaseService):
                 speed=speed,
                 output_path=output_path
             )
+        elif mode == "api":
+            return await self._call_api_tts(
+                text=text,
+                voice_id=params.pop("voice_id", None) or voice,
+                speed=speed,
+                output_path=output_path,
+                **params,
+            )
         else:  # comfyui
             # 1. Resolve workflow (returns structured info)
             workflow_info = self._resolve_workflow(workflow=workflow)
@@ -137,6 +146,55 @@ class TTSService(ComfyBaseService):
                 output_path=output_path,
                 **params
             )
+
+    async def _call_api_tts(
+        self,
+        text: str,
+        voice_id: Optional[str] = None,
+        speed: Optional[float] = None,
+        output_path: Optional[str] = None,
+        provider: Optional[str] = None,
+        model: Optional[str] = None,
+        volume: Optional[float] = None,
+        **params
+    ) -> str:
+        """Generate speech using a direct third-party TTS provider."""
+        try:
+            tts_models_config = config_manager.config.to_dict().get("tts_models", {})
+        except Exception:
+            tts_models_config = self.full_config.get("tts_models", {})
+        providers_config = tts_models_config.get("providers", {})
+        final_provider = provider or tts_models_config.get("default_provider", "minimax")
+        provider_config = providers_config.get(final_provider, {})
+        final_model = (
+            model
+            or provider_config.get("default_model")
+            or tts_models_config.get("default_model")
+            or "speech-2.8-turbo"
+        )
+        final_volume = volume
+
+        if not voice_id:
+            raise ValueError("voice_id is required for API TTS mode")
+
+        if not output_path:
+            unique_id = uuid.uuid4().hex
+            output_path = f"output/{unique_id}.mp3"
+            Path("output").mkdir(parents=True, exist_ok=True)
+
+        logger.info(
+            f"🎙️  Using API TTS: provider={final_provider}, model={final_model}, voice_id={voice_id}"
+        )
+        client = TTSClient()
+        return await client.generate_speech(
+            provider=final_provider,
+            text=text,
+            voice_id=voice_id,
+            model=final_model,
+            output_path=output_path,
+            speed=speed,
+            volume=final_volume,
+        )
     
     async def _call_local_tts(
         self,
@@ -180,7 +238,7 @@ class TTSService(ComfyBaseService):
         
         # Call Edge TTS
         try:
-            audio_bytes = await edge_tts(
+            await edge_tts(
                 text=text,
                 voice=final_voice,
                 rate=rate,
@@ -284,7 +342,7 @@ class TTSService(ComfyBaseService):
             
             if not audio_path:
                 logger.error("No audio file generated")
-                logger.error(f"❌ Result analysis:")
+                logger.error("❌ Result analysis:")
                 logger.error(f"   - result.audios: {getattr(result, 'audios', 'NOT_FOUND')}")
                 logger.error(f"   - result.files: {getattr(result, 'files', 'NOT_FOUND')}")
                 logger.error(f"   - result.outputs: {getattr(result, 'outputs', 'NOT_FOUND')}")
@@ -293,8 +351,9 @@ class TTSService(ComfyBaseService):
             
             # If output_path provided and audio_path is URL, download to local
             if output_path and audio_path.startswith(('http://', 'https://')):
-                import httpx
                 import os
+
+                import httpx
                 
                 # Ensure parent directory exists
                 os.makedirs(os.path.dirname(output_path), exist_ok=True)

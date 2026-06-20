@@ -24,7 +24,7 @@ from loguru import logger
 from web.i18n import get_language, set_language
 from web.utils.async_helpers import run_async
 
-_PIXELLE_CORE_CAPABILITY_VERSION = 4
+_PIXELLE_CORE_CAPABILITY_VERSION = 5
 
 
 def init_session_state():
@@ -60,6 +60,9 @@ def _needs_core_recreate(pixelle_video) -> bool:
     if history is None:
         return True
     if getattr(pixelle_video, "task_editor", None) is None:
+        return True
+    tts_service = getattr(pixelle_video, "tts", None)
+    if tts_service is None or not hasattr(tts_service, "_call_api_tts"):
         return True
     if any(not hasattr(history, method) for method in required_history_methods):
         return True

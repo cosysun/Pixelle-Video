@@ -45,6 +45,21 @@ api_providers:
     base_url: "https://generativelanguage.googleapis.com"
     use_proxy: false
 
+# ==================== Direct API TTS Model Configuration ====================
+# Optional: use third-party APIs for text-to-speech synthesis.
+# Phase one supports MiniMax only.
+tts_models:
+  default_provider: minimax
+  default_model: speech-2.8-turbo
+  providers:
+    minimax:
+      api_key: ""
+      base_url: "https://api.minimaxi.com"
+      default_model: speech-2.8-turbo
+      default_voice_id: null
+      default_voice_type: null
+      use_proxy: false
+
 # ==================== ComfyUI Configuration ====================
 comfyui:
   # Global ComfyUI settings

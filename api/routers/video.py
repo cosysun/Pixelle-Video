@@ -17,16 +17,17 @@ Supports both synchronous and asynchronous video generation.
 """
 
 import os
+
 from fastapi import APIRouter, HTTPException, Request
 from loguru import logger
 
 from api.dependencies import PixelleVideoDep
 from api.schemas.video import (
+    VideoGenerateAsyncResponse,
     VideoGenerateRequest,
     VideoGenerateResponse,
-    VideoGenerateAsyncResponse,
 )
-from api.tasks import task_manager, TaskType
+from api.tasks import TaskType, task_manager
 
 router = APIRouter(prefix="/video", tags=["Video Generation"])
 
@@ -54,8 +55,8 @@ def path_to_url(request: Request, file_path: str) -> str:
         
         Domain:  With domain request -> https://your-domain.com/api/files/...
     """
-    from pathlib import Path
     import os
+    from pathlib import Path
     
     # Normalize path separators to forward slashes first (for cross-platform compatibility)
     file_path = file_path.replace("\\", "/")
@@ -139,6 +140,20 @@ async def generate_video_sync(
             "bgm_volume": request_body.bgm_volume,
         }
         
+        # Add TTS workflow if specified
+        if request_body.tts_inference_mode:
+            video_params["tts_inference_mode"] = request_body.tts_inference_mode
+        if request_body.tts_provider:
+            video_params["tts_provider"] = request_body.tts_provider
+        if request_body.tts_model:
+            video_params["tts_model"] = request_body.tts_model
+        if request_body.tts_voice_id:
+            video_params["tts_voice_id"] = request_body.tts_voice_id
+        if request_body.tts_speed is not None:
+            video_params["tts_speed"] = request_body.tts_speed
+        if request_body.tts_volume is not None:
+            video_params["tts_volume"] = request_body.tts_volume
+
         # Add TTS workflow if specified
         if request_body.tts_workflow:
             video_params["tts_workflow"] = request_body.tts_workflow
@@ -245,6 +260,19 @@ async def generate_video_async(
                 # "progress_callback": lambda event: task_manager.update_progress(...)
             }
             
+            if request_body.tts_inference_mode:
+                video_params["tts_inference_mode"] = request_body.tts_inference_mode
+            if request_body.tts_provider:
+                video_params["tts_provider"] = request_body.tts_provider
+            if request_body.tts_model:
+                video_params["tts_model"] = request_body.tts_model
+            if request_body.tts_voice_id:
+                video_params["tts_voice_id"] = request_body.tts_voice_id
+            if request_body.tts_speed is not None:
+                video_params["tts_speed"] = request_body.tts_speed
+            if request_body.tts_volume is not None:
+                video_params["tts_volume"] = request_body.tts_volume
+
             # Add TTS workflow if specified
             if request_body.tts_workflow:
                 video_params["tts_workflow"] = request_body.tts_workflow

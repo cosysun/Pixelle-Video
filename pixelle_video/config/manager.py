@@ -17,9 +17,11 @@ Provides unified access to configuration with automatic validation.
 """
 from pathlib import Path
 from typing import Any, Optional
+
 from loguru import logger
-from .schema import PixelleVideoConfig
+
 from .loader import load_config_dict, save_config_dict
+from .schema import PixelleVideoConfig
 
 
 class ConfigManager:
@@ -133,7 +135,10 @@ class ConfigManager:
             "runninghub_concurrent_limit": self.config.comfyui.runninghub_concurrent_limit,
             "runninghub_instance_type": self.config.comfyui.runninghub_instance_type,
             "tts": {
+                "inference_mode": self.config.comfyui.tts.inference_mode,
                 "default_workflow": self.config.comfyui.tts.default_workflow,
+                "local": self.config.comfyui.tts.local.model_dump(),
+                "comfyui": self.config.comfyui.tts.comfyui.model_dump(),
             },
             "image": {
                 "default_workflow": self.config.comfyui.image.default_workflow,
@@ -152,6 +157,28 @@ class ConfigManager:
     def set_api_provider_config(self, provider: str, updates: dict):
         """Set configuration for a direct API provider"""
         self.update({"api_providers": {provider: updates}})
+
+    def get_tts_models_config(self) -> dict:
+        """Get third-party TTS model configuration as dict"""
+        return self.config.tts_models.model_dump()
+
+    def set_tts_provider_config(self, provider: str, updates: dict):
+        """Set configuration for a third-party TTS provider"""
+        self.update({"tts_models": {"providers": {provider: updates}}})
+
+    def set_tts_models_defaults(
+        self,
+        default_provider: Optional[str] = None,
+        default_model: Optional[str] = None,
+    ):
+        """Set default third-party TTS provider/model."""
+        updates = {}
+        if default_provider is not None:
+            updates["default_provider"] = default_provider
+        if default_model is not None:
+            updates["default_model"] = default_model
+        if updates:
+            self.update({"tts_models": updates})
     
     def set_comfyui_config(
         self, 

@@ -378,6 +378,11 @@ class PersistenceService:
             "voice_id": config.voice_id,
             "tts_workflow": config.tts_workflow,
             "tts_speed": config.tts_speed,
+            "tts_volume": config.tts_volume,
+            "tts_provider": config.tts_provider,
+            "tts_model": config.tts_model,
+            "tts_voice_id": config.tts_voice_id,
+            "tts_audio_repair_enabled": config.tts_audio_repair_enabled,
             "ref_audio": config.ref_audio,
             "media_width": config.media_width,
             "media_height": config.media_height,
@@ -404,6 +409,11 @@ class PersistenceService:
             voice_id=data.get("voice_id"),
             tts_workflow=data.get("tts_workflow"),
             tts_speed=data.get("tts_speed"),
+            tts_volume=data.get("tts_volume"),
+            tts_provider=data.get("tts_provider"),
+            tts_model=data.get("tts_model"),
+            tts_voice_id=data.get("tts_voice_id"),
+            tts_audio_repair_enabled=data.get("tts_audio_repair_enabled", False),
             ref_audio=data.get("ref_audio"),
             media_width=data.get("media_width", data.get("image_width", 1024)),  # Backward compatibility
             media_height=data.get("media_height", data.get("image_height", 1024)),  # Backward compatibility

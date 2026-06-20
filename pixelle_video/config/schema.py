@@ -16,6 +16,7 @@ Configuration schema with Pydantic models
 Single source of truth for all configuration defaults and validation.
 """
 from typing import Optional
+
 from pydantic import BaseModel, Field
 
 
@@ -56,6 +57,26 @@ class APIProvidersConfig(BaseModel):
     gemini: APIKeyProviderConfig = Field(default_factory=APIKeyProviderConfig)
     ark: APIKeyProviderConfig = Field(default_factory=APIKeyProviderConfig)
     kling: AccessSecretProviderConfig = Field(default_factory=AccessSecretProviderConfig)
+
+
+class MiniMaxTTSProviderConfig(APIKeyProviderConfig):
+    """MiniMax TTS provider settings"""
+    base_url: str = Field(default="https://api.minimaxi.com", description="MiniMax API Base URL")
+    default_model: str = Field(default="speech-2.8-turbo", description="Default MiniMax TTS model")
+    default_voice_id: Optional[str] = Field(default=None, description="Default MiniMax voice_id")
+    default_voice_type: Optional[str] = Field(default=None, description="Default MiniMax voice type")
+
+
+class TTSModelProvidersConfig(BaseModel):
+    """Third-party TTS model provider settings"""
+    minimax: MiniMaxTTSProviderConfig = Field(default_factory=MiniMaxTTSProviderConfig)
+
+
+class TTSModelsConfig(BaseModel):
+    """Third-party TTS model configuration"""
+    default_provider: str = Field(default="minimax", description="Default third-party TTS provider")
+    default_model: str = Field(default="speech-2.8-turbo", description="Default third-party TTS model")
+    providers: TTSModelProvidersConfig = Field(default_factory=TTSModelProvidersConfig)
 
 
 class TTSLocalConfig(BaseModel):
@@ -125,6 +146,7 @@ class PixelleVideoConfig(BaseModel):
     project_name: str = Field(default="Pixelle-Video", description="Project name")
     llm: LLMConfig = Field(default_factory=LLMConfig)
     api_providers: APIProvidersConfig = Field(default_factory=APIProvidersConfig)
+    tts_models: TTSModelsConfig = Field(default_factory=TTSModelsConfig)
     comfyui: ComfyUIConfig = Field(default_factory=ComfyUIConfig)
     template: TemplateConfig = Field(default_factory=TemplateConfig)
     

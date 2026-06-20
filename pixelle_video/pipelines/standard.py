@@ -18,41 +18,34 @@ This is the default pipeline for general-purpose video generation.
 Refactored to use LinearVideoPipeline (Template Method Pattern).
 """
 
-from datetime import datetime
-from pathlib import Path
-from typing import Optional, Callable, Literal, List
 import asyncio
 import shutil
+from datetime import datetime
+from pathlib import Path
 
 from loguru import logger
 
-from pixelle_video.pipelines.linear import LinearVideoPipeline, PipelineContext
 from pixelle_video.models.progress import ProgressEvent
 from pixelle_video.models.storyboard import (
     Storyboard,
-    StoryboardFrame,
     StoryboardConfig,
-    ContentMetadata,
-    VideoGenerationResult
+    StoryboardFrame,
+    VideoGenerationResult,
 )
-from pixelle_video.utils.content_generators import (
-    generate_title,
-    generate_narrations_from_topic,
-    split_narration_script,
-    generate_image_prompts,
-    resolve_content_style_params,
-    TECH_POP_IMAGE_STYLE_PRESET,
-)
+from pixelle_video.pipelines.linear import LinearVideoPipeline, PipelineContext
 from pixelle_video.prompts.image_generation import IMAGE_STYLE_PRESETS
-from pixelle_video.utils.os_util import (
-    create_task_output_dir,
-    get_task_final_video_path
-)
-from pixelle_video.utils.template_util import get_template_type
-from pixelle_video.utils.prompt_helper import build_image_prompt
 from pixelle_video.services.video import VideoService
-
-
+from pixelle_video.utils.content_generators import (
+    TECH_POP_IMAGE_STYLE_PRESET,
+    generate_image_prompts,
+    generate_narrations_from_topic,
+    generate_title,
+    resolve_content_style_params,
+    split_narration_script,
+)
+from pixelle_video.utils.os_util import create_task_output_dir, get_task_final_video_path
+from pixelle_video.utils.prompt_helper import build_image_prompt
+from pixelle_video.utils.template_util import get_template_type
 
 
 class StandardPipeline(LinearVideoPipeline):
@@ -248,12 +241,12 @@ class StandardPipeline(LinearVideoPipeline):
         template_requires_media = (template_type in ["image", "video"])
         
         if template_type == "image":
-            logger.info(f"📸 Template requires image generation")
+            logger.info("📸 Template requires image generation")
         elif template_type == "video":
-            logger.info(f"🎬 Template requires video generation")
+            logger.info("🎬 Template requires video generation")
         else:  # static
-            logger.info(f"⚡ Static template - skipping media generation pipeline")
-            logger.info(f"   💡 Benefits: Faster generation + Lower cost + No ComfyUI dependency")
+            logger.info("⚡ Static template - skipping media generation pipeline")
+            logger.info("   💡 Benefits: Faster generation + Lower cost + No ComfyUI dependency")
         
         # Only generate image prompts if template requires media
         if template_requires_media:
@@ -316,7 +309,7 @@ class StandardPipeline(LinearVideoPipeline):
         else:
             # Static template - skip image prompt generation entirely
             ctx.image_prompts = [None] * len(ctx.narrations)
-            logger.info(f"⚡ Skipped image prompt generation (static template)")
+            logger.info("⚡ Skipped image prompt generation (static template)")
             logger.info(f"   💡 Savings: {len(ctx.narrations)} LLM calls + {len(ctx.narrations)} media generations")
 
     async def initialize_storyboard(self, ctx: PipelineContext):
@@ -325,9 +318,13 @@ class StandardPipeline(LinearVideoPipeline):
         tts_inference_mode = ctx.params.get("tts_inference_mode")
         tts_voice = ctx.params.get("tts_voice")
         voice_id = ctx.params.get("voice_id")
+        tts_voice_id = ctx.params.get("tts_voice_id")
         tts_workflow = ctx.params.get("tts_workflow")
+        tts_provider = ctx.params.get("tts_provider")
+        tts_model = ctx.params.get("tts_model")
         
         final_voice_id = None
+        final_tts_voice_id = None
         final_tts_workflow = tts_workflow
         
         if tts_inference_mode:
@@ -339,6 +336,12 @@ class StandardPipeline(LinearVideoPipeline):
             elif tts_inference_mode == "comfyui":
                 final_voice_id = None
                 logger.debug(f"TTS Mode: comfyui (workflow={final_tts_workflow})")
+            elif tts_inference_mode == "api":
+                final_tts_workflow = None
+                final_tts_voice_id = tts_voice_id or voice_id
+                logger.debug(
+                    f"TTS Mode: api (provider={tts_provider}, model={tts_model}, voice_id={final_tts_voice_id})"
+                )
         else:
             # Old API
             final_voice_id = voice_id or tts_voice or "zh-CN-YunjianNeural"
@@ -357,6 +360,10 @@ class StandardPipeline(LinearVideoPipeline):
             voice_id=final_voice_id,
             tts_workflow=final_tts_workflow,
             tts_speed=ctx.params.get("tts_speed", 1.2),
+            tts_volume=ctx.params.get("tts_volume"),
+            tts_provider=tts_provider,
+            tts_model=tts_model,
+            tts_voice_id=final_tts_voice_id,
             ref_audio=ctx.params.get("ref_audio"),
             media_width=ctx.params.get("media_width"),
             media_height=ctx.params.get("media_height"),

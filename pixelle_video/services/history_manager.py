@@ -269,6 +269,33 @@ class HistoryManager:
             persist_overrides=persist_overrides,
         )
 
+    async def insert_frame(
+        self,
+        task_id: str,
+        position: int,
+        narration: str,
+        image_prompt: Optional[str],
+        tts_overrides: Optional[Dict[str, Any]] = None,
+        media_overrides: Optional[Dict[str, Any]] = None,
+        persist_overrides: bool = False,
+        image_source_index: Optional[int] = None,
+    ) -> Dict[str, Any]:
+        """Insert a new storyboard frame and rebuild the final video."""
+        return await self._require_task_editor().insert_frame(
+            task_id,
+            position,
+            narration,
+            image_prompt,
+            tts_overrides=tts_overrides,
+            media_overrides=media_overrides,
+            persist_overrides=persist_overrides,
+            image_source_index=image_source_index,
+        )
+
+    async def delete_frame(self, task_id: str, frame_index: int) -> Dict[str, Any]:
+        """Delete a storyboard frame and rebuild the final video."""
+        return await self._require_task_editor().delete_frame(task_id, frame_index)
+
     async def replace_template(self, task_id: str, frame_template: str) -> Dict[str, Any]:
         """Replace the task-level frame template and rebuild the final video."""
         return await self._require_task_editor().replace_template(task_id, frame_template)

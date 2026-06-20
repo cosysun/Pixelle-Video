@@ -24,7 +24,7 @@ from loguru import logger
 from web.i18n import get_language, set_language
 from web.utils.async_helpers import run_async
 
-_PIXELLE_CORE_CAPABILITY_VERSION = 5
+_PIXELLE_CORE_CAPABILITY_VERSION = 6
 
 
 def init_session_state():
@@ -53,6 +53,8 @@ def _needs_core_recreate(pixelle_video) -> bool:
         "regenerate_all_audio",
         "regenerate_frame_audio",
         "regenerate_frame_media",
+        "insert_frame",
+        "delete_frame",
         "replace_template",
         "request_cancel_edit",
     )

@@ -18,6 +18,7 @@ import os
 import shutil
 from dataclasses import fields, replace
 from datetime import datetime
+from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, Optional
 
 from loguru import logger
@@ -185,6 +186,80 @@ class TaskEditService:
 
         return await self._rebuild_final_video(task_id, storyboard, metadata)
 
+    async def insert_frame(
+        self,
+        task_id: str,
+        position: int,
+        narration: str,
+        image_prompt: Optional[str],
+        tts_overrides: Optional[Dict[str, Any]] = None,
+        media_overrides: Optional[Dict[str, Any]] = None,
+        persist_overrides: bool = False,
+        image_source_index: Optional[int] = None,
+    ) -> Dict[str, Any]:
+        """Insert a new storyboard frame, process it, and rebuild the final video."""
+        storyboard, metadata = await self._load_task(task_id)
+        if position < 0 or position > len(storyboard.frames):
+            raise IndexError(f"Insert position {position} out of range")
+
+        narration = (narration or "").strip()
+        if not narration:
+            raise ValueError("Narration is required for a new frame")
+
+        image_prompt = (image_prompt or "").strip() or None
+        if image_source_index is not None:
+            parent = self._get_frame(storyboard, image_source_index)
+            if parent.image_source_index is not None:
+                raise ValueError("Child frames can only be created from a parent frame")
+        elif self._template_requires_media(storyboard.config) and not image_prompt:
+            raise ValueError("Image prompt is required for the current frame template")
+
+        await self.create_revision_backup(
+            task_id,
+            changed_frame_indexes=[frame.index for frame in storyboard.frames[position:]],
+        )
+        self._shift_standard_frame_artifacts_for_insert(task_id, storyboard.frames, position)
+
+        new_frame = StoryboardFrame(
+            index=-1,
+            narration=narration,
+            image_prompt=image_prompt,
+            image_source_index=image_source_index,
+        )
+        storyboard.frames.insert(position, new_frame)
+        self._renumber_frames(storyboard)
+        self._sync_frame_counts(storyboard, metadata)
+
+        processing_overrides: Dict[str, Any] = {}
+        processing_overrides.update(tts_overrides or {})
+        processing_overrides.update(media_overrides or {})
+        processing_config = self._config_with_overrides(storyboard.config, processing_overrides)
+        if persist_overrides:
+            storyboard.config = processing_config
+
+        await self._process_frame(storyboard, new_frame, processing_config)
+        return await self._rebuild_final_video(task_id, storyboard, metadata)
+
+    async def delete_frame(self, task_id: str, frame_index: int) -> Dict[str, Any]:
+        """Delete a storyboard frame and dependent subtitle-child frames."""
+        storyboard, metadata = await self._load_task(task_id)
+        self._get_frame(storyboard, frame_index)
+        delete_indexes = self._cascade_delete_indexes(storyboard, frame_index)
+        if len(storyboard.frames) - len(delete_indexes) <= 0:
+            raise ValueError("Cannot delete all storyboard frames")
+
+        await self.create_revision_backup(
+            task_id,
+            changed_frame_indexes=[frame.index for frame in storyboard.frames],
+        )
+
+        self._remove_standard_frame_artifacts(task_id, delete_indexes)
+        storyboard.frames = [frame for frame in storyboard.frames if frame.index not in delete_indexes]
+        self._realign_standard_frame_artifacts(task_id, storyboard.frames)
+        self._renumber_frames(storyboard)
+        self._sync_frame_counts(storyboard, metadata)
+        return await self._rebuild_final_video(task_id, storyboard, metadata)
+
     async def create_revision_backup(
         self,
         task_id: str,
@@ -271,6 +346,183 @@ class TaskEditService:
             if frame.index == frame_index or frame.image_source_index == frame_index
         ]
         return sorted(related, key=lambda frame: frame.index)
+
+    def _cascade_delete_indexes(self, storyboard: Storyboard, frame_index: int) -> set[int]:
+        delete_indexes = {frame_index}
+        changed = True
+        while changed:
+            changed = False
+            for frame in storyboard.frames:
+                if frame.image_source_index in delete_indexes and frame.index not in delete_indexes:
+                    delete_indexes.add(frame.index)
+                    changed = True
+        return delete_indexes
+
+    def _renumber_frames(self, storyboard: Storyboard) -> None:
+        old_indexes = {id(frame): frame.index for frame in storyboard.frames}
+        old_to_new = {
+            old_index: new_index
+            for new_index, frame in enumerate(storyboard.frames)
+            if (old_index := old_indexes[id(frame)]) >= 0
+        }
+
+        for new_index, frame in enumerate(storyboard.frames):
+            if frame.image_source_index is not None:
+                if frame.image_source_index not in old_to_new:
+                    raise ValueError(
+                        f"Frame {frame.index} references deleted frame "
+                        f"{frame.image_source_index}"
+                    )
+                frame.image_source_index = old_to_new[frame.image_source_index]
+            frame.index = new_index
+
+    def _sync_frame_counts(self, storyboard: Storyboard, metadata: Dict[str, Any]) -> None:
+        frame_count = len(storyboard.frames)
+        storyboard.config.n_storyboard = frame_count
+        metadata.setdefault("input", {})["n_scenes"] = frame_count
+
+    def _shift_standard_frame_artifacts_for_insert(
+        self,
+        task_id: str,
+        frames: list[StoryboardFrame],
+        position: int,
+    ) -> None:
+        """Move standard 01_* frame files out of the inserted frame's target slot."""
+        if position >= len(frames):
+            return
+
+        moved_paths: Dict[str, str] = {}
+        moved_fields: set[tuple[int, str]] = set()
+
+        for frame in sorted(frames, key=lambda item: item.index, reverse=True):
+            old_index = frame.index
+            if old_index < position:
+                continue
+
+            for attr, file_type in self._artifact_fields():
+                current_path = getattr(frame, attr, None)
+                if not current_path:
+                    continue
+
+                old_standard_path = self._standard_frame_artifact_path(
+                    task_id,
+                    old_index,
+                    file_type,
+                )
+                if os.path.abspath(current_path) != os.path.abspath(old_standard_path):
+                    continue
+
+                new_standard_path = self._standard_frame_artifact_path(
+                    task_id,
+                    old_index + 1,
+                    file_type,
+                )
+                if os.path.exists(current_path):
+                    os.makedirs(os.path.dirname(new_standard_path), exist_ok=True)
+                    if os.path.exists(new_standard_path):
+                        os.remove(new_standard_path)
+                    shutil.move(current_path, new_standard_path)
+                moved_paths[os.path.abspath(current_path)] = new_standard_path
+                setattr(frame, attr, new_standard_path)
+                moved_fields.add((id(frame), attr))
+
+        self._apply_moved_artifact_paths(frames, moved_paths, moved_fields)
+
+    def _realign_standard_frame_artifacts(
+        self,
+        task_id: str,
+        frames: list[StoryboardFrame],
+    ) -> None:
+        """Move standard frame artifacts to match their new post-delete positions."""
+        moved_paths: Dict[str, str] = {}
+        moved_fields: set[tuple[int, str]] = set()
+
+        for new_index, frame in enumerate(sorted(frames, key=lambda item: item.index)):
+            old_index = frame.index
+            if old_index == new_index:
+                continue
+
+            for attr, file_type in self._artifact_fields():
+                current_path = getattr(frame, attr, None)
+                if not current_path:
+                    continue
+
+                old_standard_path = self._standard_frame_artifact_path(
+                    task_id,
+                    old_index,
+                    file_type,
+                )
+                if os.path.abspath(current_path) != os.path.abspath(old_standard_path):
+                    continue
+
+                new_standard_path = self._standard_frame_artifact_path(
+                    task_id,
+                    new_index,
+                    file_type,
+                )
+                if os.path.exists(current_path):
+                    os.makedirs(os.path.dirname(new_standard_path), exist_ok=True)
+                    if os.path.exists(new_standard_path):
+                        os.remove(new_standard_path)
+                    shutil.move(current_path, new_standard_path)
+                moved_paths[os.path.abspath(current_path)] = new_standard_path
+                setattr(frame, attr, new_standard_path)
+                moved_fields.add((id(frame), attr))
+
+        self._apply_moved_artifact_paths(frames, moved_paths, moved_fields)
+
+    def _remove_standard_frame_artifacts(self, task_id: str, frame_indexes: Iterable[int]) -> None:
+        """Remove standard 01_* artifacts for frames that are being deleted."""
+        for frame_index in frame_indexes:
+            for _attr, file_type in self._artifact_fields():
+                path = self._standard_frame_artifact_path(task_id, frame_index, file_type)
+                try:
+                    Path(path).unlink(missing_ok=True)
+                except IsADirectoryError:
+                    logger.warning(f"Skipped deleting directory artifact path: {path}")
+
+    def _apply_moved_artifact_paths(
+        self,
+        frames: list[StoryboardFrame],
+        moved_paths: Dict[str, str],
+        moved_fields: set[tuple[int, str]],
+    ) -> None:
+        if not moved_paths:
+            return
+
+        for frame in frames:
+            for attr, _file_type in self._artifact_fields():
+                if (id(frame), attr) in moved_fields:
+                    continue
+                current_path = getattr(frame, attr, None)
+                if not current_path:
+                    continue
+                moved_path = moved_paths.get(os.path.abspath(current_path))
+                if moved_path:
+                    setattr(frame, attr, moved_path)
+
+    def _artifact_fields(self) -> tuple[tuple[str, str], ...]:
+        return (
+            ("audio_path", "audio"),
+            ("image_path", "image"),
+            ("video_path", "video"),
+            ("composed_image_path", "composed"),
+            ("video_segment_path", "segment"),
+        )
+
+    def _standard_frame_artifact_path(self, task_id: str, frame_index: int, file_type: str) -> str:
+        ext_by_type = {
+            "audio": "mp3",
+            "image": "png",
+            "video": "mp4",
+            "composed": "png",
+            "segment": "mp4",
+        }
+        frames_dir = self.persistence.get_task_dir(task_id) / "frames"
+        return str(frames_dir / f"{frame_index + 1:02d}_{file_type}.{ext_by_type[file_type]}")
+
+    def _template_requires_media(self, config: StoryboardConfig) -> bool:
+        return get_template_type(os.path.basename(config.frame_template or "")) != "static"
 
     def _config_with_overrides(
         self,

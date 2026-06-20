@@ -34,7 +34,12 @@ from web.components.header import render_header  # noqa: E402
 from web.i18n import get_language, tr  # noqa: E402
 from web.state.session import get_pixelle_video, init_i18n, init_session_state  # noqa: E402
 from web.utils.async_helpers import run_async  # noqa: E402
-from web.utils.tts_models_config import get_tts_models_config  # noqa: E402
+from web.utils.edit_action_guard import is_recent_duplicate_action  # noqa: E402
+from web.utils.tts_models_config import (  # noqa: E402
+    get_tts_models_config,
+    resolve_history_api_tts_voice_id,
+)
+from web.utils.video_preview import read_video_preview_bytes  # noqa: E402
 
 # Page config
 st.set_page_config(
@@ -77,6 +82,11 @@ def format_datetime(iso_string: str) -> str:
         return dt.strftime("%m-%d %H:%M")
     except Exception:
         return iso_string
+
+
+def _render_local_video(video_path: str, **kwargs):
+    """Render local video bytes so overwritten files are not served from cache."""
+    st.video(read_video_preview_bytes(video_path), format="video/mp4", **kwargs)
 
 
 def truncate_text(text: str, max_length: int = 60) -> str:
@@ -209,11 +219,8 @@ def _render_tts_overrides(prefix: str, pixelle_video, config) -> tuple[dict, boo
             or tts_models_config.get("default_model")
             or "speech-2.8-turbo"
         )
-        current_voice_id = (
-            getattr(config, "tts_voice_id", None)
-            or minimax_config.get("default_voice_id")
-            or ""
-        )
+        current_voice_id = resolve_history_api_tts_voice_id(config, minimax_config)
+        voice_input_key = f"{prefix}_api_voice_id_{current_voice_id}"
 
         st.caption(
             f"MiniMax 模型：{model}"
@@ -223,7 +230,7 @@ def _render_tts_overrides(prefix: str, pixelle_video, config) -> tuple[dict, boo
         voice_id = st.text_input(
             "MiniMax voice_id" if zh else "MiniMax voice_id",
             value=current_voice_id,
-            key=f"{prefix}_api_voice_id",
+            key=voice_input_key,
         ).strip()
         overrides["voice_id"] = None
         overrides["tts_workflow"] = None
@@ -316,6 +323,130 @@ def _render_template_replacement(prefix: str, config) -> str | None:
     return selected_template
 
 
+def _render_insert_frame_controls(
+    task_id: str,
+    position: int,
+    label: str,
+    key_suffix: str,
+    pixelle_video,
+    storyboard,
+    image_source_index: int | None = None,
+):
+    """Render controls for inserting and immediately generating one new frame."""
+    is_child_frame = image_source_index is not None
+    with st.expander(label, expanded=False):
+        narration = st.text_area(
+            tr("history.edit.new_frame_narration"),
+            value="",
+            height=90,
+            key=f"insert_narration_{task_id}_{key_suffix}",
+        )
+        image_prompt = None
+        if is_child_frame:
+            st.caption(tr("history.edit.new_child_frame_hint"))
+        else:
+            image_prompt = st.text_area(
+                tr("history.edit.new_frame_image_prompt"),
+                value="",
+                height=100,
+                key=f"insert_prompt_{task_id}_{key_suffix}",
+                help=tr("history.edit.new_frame_prompt_help"),
+            )
+        with st.expander(tr("history.edit.single_audio_options"), expanded=False):
+            tts_overrides, persist_tts = _render_tts_overrides(
+                f"insert_audio_{task_id}_{key_suffix}",
+                pixelle_video,
+                storyboard.config,
+            )
+        media_overrides = None
+        persist_media = False
+        if not is_child_frame:
+            with st.expander(tr("history.edit.single_media_options"), expanded=False):
+                media_overrides, persist_media = _render_media_overrides(
+                    f"insert_media_{task_id}_{key_suffix}",
+                    pixelle_video,
+                    storyboard.config,
+                )
+
+        if st.button(
+            tr("history.edit.insert_frame_submit"),
+            key=f"insert_frame_submit_{task_id}_{key_suffix}",
+            use_container_width=True,
+        ):
+            if not narration.strip():
+                st.error(tr("history.edit.new_frame_narration_required"))
+                return
+            with st.spinner(tr("history.edit.processing")):
+                insert_action_key = (
+                    f"insert_frame:{task_id}:{key_suffix}:"
+                    f"{image_source_index}:{narration.strip()}"
+                )
+                _run_edit_action(
+                    lambda: pixelle_video.history.insert_frame(
+                        task_id,
+                        position,
+                        narration,
+                        image_prompt,
+                        tts_overrides=tts_overrides,
+                        media_overrides=media_overrides,
+                        persist_overrides=persist_tts or persist_media,
+                        image_source_index=image_source_index,
+                    ),
+                    tr("history.edit.success"),
+                    action_key=insert_action_key,
+                )
+
+
+def _child_insert_position(storyboard, parent_index: int) -> int:
+    related_indexes = [
+        frame.index
+        for frame in storyboard.frames
+        if frame.index == parent_index or frame.image_source_index == parent_index
+    ]
+    return max(related_indexes) + 1
+
+
+def _cascade_delete_count(storyboard, frame_index: int) -> int:
+    """Return how many frames would be removed by deleting frame_index."""
+    delete_indexes = {frame_index}
+    changed = True
+    while changed:
+        changed = False
+        for frame in storyboard.frames:
+            if frame.image_source_index in delete_indexes and frame.index not in delete_indexes:
+                delete_indexes.add(frame.index)
+                changed = True
+    return len(delete_indexes)
+
+
+def _render_delete_frame_controls(task_id: str, pixelle_video, storyboard, frame):
+    delete_count = _cascade_delete_count(storyboard, frame.index)
+    remaining_count = len(storyboard.frames) - delete_count
+    with st.expander(tr("history.edit.delete_frame_tools"), expanded=False):
+        if delete_count > 1:
+            st.warning(tr("history.edit.delete_frame_cascade_hint", count=delete_count))
+        if remaining_count <= 0:
+            st.info(tr("history.edit.delete_frame_last_hint"))
+            return
+
+        confirmed = st.checkbox(
+            tr("history.edit.delete_frame_confirm"),
+            value=False,
+            key=f"delete_frame_confirm_{task_id}_{frame.index}",
+        )
+        if st.button(
+            tr("history.edit.delete_frame_submit"),
+            key=f"delete_frame_submit_{task_id}_{frame.index}",
+            use_container_width=True,
+            disabled=not confirmed,
+        ):
+            with st.spinner(tr("history.edit.processing")):
+                _run_edit_action(
+                    lambda: pixelle_video.history.delete_frame(task_id, frame.index),
+                    tr("history.edit.success"),
+                )
+
+
 def _render_all_audio_progress_callback(prefix: str):
     progress_bar = st.progress(0.0)
     status = st.empty()
@@ -346,10 +477,21 @@ def _is_task_edit_cancelled(error: BaseException) -> bool:
     return error.__class__.__name__ == "TaskEditCancelled"
 
 
-def _run_edit_action(action, success_message: str, cancel_action=None):
+def _run_edit_action(action, success_message: str, cancel_action=None, action_key: str | None = None):
     """Run a history edit action and refresh the page on success."""
+    duplicate_state_key = f"history_edit_completed_at_{action_key}" if action_key else None
+    now = datetime.now().timestamp()
+    if duplicate_state_key and is_recent_duplicate_action(
+        last_completed_at=st.session_state.get(duplicate_state_key),
+        now=now,
+    ):
+        st.warning(tr("history.edit.duplicate_ignored"))
+        return
+
     try:
         result = run_async(action())
+        if duplicate_state_key:
+            st.session_state[duplicate_state_key] = datetime.now().timestamp()
         st.success(success_message)
         if result and result.get("video_path"):
             st.caption(result["video_path"])
@@ -379,6 +521,8 @@ def _ensure_history_edit_capabilities(pixelle_video):
         "regenerate_all_audio",
         "regenerate_frame_audio",
         "regenerate_frame_media",
+        "insert_frame",
+        "delete_frame",
         "replace_template",
         "request_cancel_edit",
     )
@@ -532,7 +676,7 @@ def render_grid_task_card(task: dict, pixelle_video):
     with st.container():
         # Video preview at top
         if video_path and os.path.exists(video_path):
-            st.video(video_path, autoplay=False, loop=False, muted=False)
+            _render_local_video(video_path, autoplay=False, loop=False, muted=False)
         else:
             st.markdown(
                 "<div style='background: #f0f0f0; height: 180px; display: flex; align-items: center; "
@@ -691,6 +835,14 @@ def render_task_detail_modal(task_id: str, pixelle_video):
         st.markdown(f"**🎬 {tr('history.detail.storyboard')}**")
         
         if storyboard and storyboard.frames:
+            _render_insert_frame_controls(
+                task_id,
+                0,
+                tr("history.edit.insert_frame_at_start"),
+                "start",
+                pixelle_video,
+                storyboard,
+            )
             for frame in storyboard.frames:
                 with st.expander(f"{tr('history.detail.frame')} {frame.index + 1}", expanded=False):
                     st.markdown(f"**{tr('history.detail.narration')}:**")
@@ -709,7 +861,7 @@ def render_task_detail_modal(task_id: str, pixelle_video):
                             st.image(frame.image_path)
                     with col2:
                         if frame.video_segment_path and os.path.exists(frame.video_segment_path):
-                            st.video(frame.video_segment_path)
+                            _render_local_video(frame.video_segment_path)
                     
                     # Audio player (compact)
                     if frame.audio_path and os.path.exists(frame.audio_path):
@@ -776,6 +928,26 @@ def render_task_detail_modal(task_id: str, pixelle_video):
                                 )
                     elif frame.image_source_index is not None:
                         st.caption(tr("history.edit.media_child_hint"))
+
+                    _render_insert_frame_controls(
+                        task_id,
+                        frame.index + 1,
+                        tr("history.edit.insert_frame_after"),
+                        f"after_{frame.index}",
+                        pixelle_video,
+                        storyboard,
+                    )
+                    if frame.image_source_index is None:
+                        _render_insert_frame_controls(
+                            task_id,
+                            _child_insert_position(storyboard, frame.index),
+                            tr("history.edit.insert_child_frame"),
+                            f"child_of_{frame.index}",
+                            pixelle_video,
+                            storyboard,
+                            image_source_index=frame.index,
+                        )
+                    _render_delete_frame_controls(task_id, pixelle_video, storyboard, frame)
         else:
             st.info("No storyboard data")
     
@@ -785,7 +957,7 @@ def render_task_detail_modal(task_id: str, pixelle_video):
         
         video_path = metadata.get("result", {}).get("video_path")
         if video_path and os.path.exists(video_path):
-            st.video(video_path)
+            _render_local_video(video_path)
             
             # Video info
             result = metadata.get("result", {})

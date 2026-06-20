@@ -51,6 +51,20 @@ def get_tts_models_config(config_manager) -> dict:
     return default_tts_models_config()
 
 
+def resolve_history_api_tts_voice_id(config, minimax_config: dict) -> str:
+    """Choose the MiniMax voice shown by default in History editing.
+
+    History tasks persist the voice_id used at generation time. For the edit
+    controls, the user's current default should win so changing the Home page
+    default affects later history regeneration.
+    """
+    return (
+        minimax_config.get("default_voice_id")
+        or getattr(config, "tts_voice_id", None)
+        or ""
+    )
+
+
 def set_tts_models_config(
     config_manager,
     *,

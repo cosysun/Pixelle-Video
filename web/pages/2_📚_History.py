@@ -32,7 +32,12 @@ from loguru import logger  # noqa: E402
 from pixelle_video.tts_voices import EDGE_TTS_VOICES, get_voice_display_name  # noqa: E402
 from web.components.header import render_header  # noqa: E402
 from web.i18n import get_language, tr  # noqa: E402
-from web.state.session import get_pixelle_video, init_i18n, init_session_state  # noqa: E402
+from web.state.session import (  # noqa: E402
+    clear_history_frame_edit_state,
+    get_pixelle_video,
+    init_i18n,
+    init_session_state,
+)
 from web.utils.async_helpers import run_async  # noqa: E402
 from web.utils.edit_action_guard import is_recent_duplicate_action  # noqa: E402
 from web.utils.tts_models_config import (  # noqa: E402
@@ -444,6 +449,10 @@ def _render_delete_frame_controls(task_id: str, pixelle_video, storyboard, frame
                 _run_edit_action(
                     lambda: pixelle_video.history.delete_frame(task_id, frame.index),
                     tr("history.edit.success"),
+                    on_success=lambda _result: clear_history_frame_edit_state(
+                        st.session_state,
+                        task_id,
+                    ),
                 )
 
 
@@ -477,7 +486,13 @@ def _is_task_edit_cancelled(error: BaseException) -> bool:
     return error.__class__.__name__ == "TaskEditCancelled"
 
 
-def _run_edit_action(action, success_message: str, cancel_action=None, action_key: str | None = None):
+def _run_edit_action(
+    action,
+    success_message: str,
+    cancel_action=None,
+    action_key: str | None = None,
+    on_success=None,
+):
     """Run a history edit action and refresh the page on success."""
     duplicate_state_key = f"history_edit_completed_at_{action_key}" if action_key else None
     now = datetime.now().timestamp()
@@ -492,6 +507,8 @@ def _run_edit_action(action, success_message: str, cancel_action=None, action_ke
         result = run_async(action())
         if duplicate_state_key:
             st.session_state[duplicate_state_key] = datetime.now().timestamp()
+        if on_success:
+            on_success(result)
         st.success(success_message)
         if result and result.get("video_path"):
             st.caption(result["video_path"])

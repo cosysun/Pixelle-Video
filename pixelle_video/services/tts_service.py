@@ -61,6 +61,22 @@ class TTSService(ComfyBaseService):
         """
         self.full_config = config
         super().__init__(config, service_name="tts", core=core)
+
+    @staticmethod
+    def _is_f5_tts_workflow(workflow_info: dict) -> bool:
+        """Return whether the resolved workflow is the F5 TTS workflow."""
+        workflow_name = workflow_info.get("name") or Path(workflow_info.get("key", "")).name
+        return workflow_name == "tts_f5.json"
+
+    @classmethod
+    def _prepare_comfyui_text(cls, workflow_info: dict, text: str) -> str:
+        if cls._is_f5_tts_workflow(workflow_info) and text and not text.startswith("。"):
+            logger.info(
+                "Applying F5 TTS leading period workaround: "
+                f"workflow={workflow_info.get('key')}, text_length={len(text)}"
+            )
+            return f"。{text}"
+        return text
     
     
     async def __call__(
@@ -282,7 +298,7 @@ class TTSService(ComfyBaseService):
         logger.info(f"🎙️  Using workflow: {workflow_info['key']}")
         
         # 1. Build workflow parameters (ComfyKit config is now managed by core)
-        workflow_params = {"text": text}
+        workflow_params = {"text": self._prepare_comfyui_text(workflow_info, text)}
         
         # Add optional TTS parameters (only if explicitly provided and not None)
         if voice is not None:

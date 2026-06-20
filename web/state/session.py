@@ -27,6 +27,32 @@ from web.utils.async_helpers import run_async
 _PIXELLE_CORE_CAPABILITY_VERSION = 6
 
 
+def clear_history_frame_edit_state(state, task_id: str) -> None:
+    """Clear frame-indexed history edit widgets for one task.
+
+    Streamlit widget state is keyed by frame index. After insert/delete changes
+    indexes, stale values must be dropped so widgets reload from storyboard.json.
+    """
+    prefixes = (
+        f"edit_narration_{task_id}_",
+        f"edit_prompt_{task_id}_",
+        f"frame_audio_{task_id}_",
+        f"frame_media_{task_id}_",
+        f"regenerate_audio_{task_id}_",
+        f"regenerate_media_{task_id}_",
+        f"delete_frame_confirm_{task_id}_",
+        f"delete_frame_submit_{task_id}_",
+        f"insert_narration_{task_id}_",
+        f"insert_prompt_{task_id}_",
+        f"insert_audio_{task_id}_",
+        f"insert_media_{task_id}_",
+        f"insert_frame_submit_{task_id}_",
+    )
+    for key in list(state.keys()):
+        if key.startswith(prefixes):
+            del state[key]
+
+
 def init_session_state():
     """Initialize session state variables"""
     if "language" not in st.session_state:

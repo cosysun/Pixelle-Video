@@ -203,6 +203,10 @@ class HistoryManager:
             raise RuntimeError("Task editing service is not available")
         return self.task_editor
 
+    async def update_title(self, task_id: str, title: str) -> Dict[str, Any]:
+        """Update the persisted task title and rebuild rendered video frames."""
+        return await self._require_task_editor().update_title(task_id, title)
+
     async def remove_bgm(self, task_id: str) -> Dict[str, Any]:
         """Remove background music by rebuilding the final video."""
         return await self._require_task_editor().remove_bgm(task_id)

@@ -40,6 +40,29 @@ class TaskEditService:
         self.core = pixelle_video_core
         self.persistence = pixelle_video_core.persistence
 
+    async def update_title(self, task_id: str, title: str) -> Dict[str, Any]:
+        """Update a persisted task title and rebuild rendered video frames."""
+        storyboard, metadata = await self._load_task(task_id)
+        title = (title or "").strip()
+        if not title:
+            raise ValueError("Title is required")
+
+        await self.create_revision_backup(
+            task_id,
+            changed_frame_indexes=[frame.index for frame in storyboard.frames],
+        )
+
+        storyboard.title = title
+        metadata.setdefault("input", {})["title"] = title
+
+        for frame in storyboard.frames:
+            self._clear_template_outputs(frame)
+            await self._process_frame(storyboard, frame, storyboard.config)
+
+        result = await self._rebuild_final_video(task_id, storyboard, metadata)
+        result["title"] = title
+        return result
+
     async def remove_bgm(self, task_id: str) -> Dict[str, Any]:
         """Rebuild final video from existing scene segments without BGM."""
         storyboard, metadata = await self._load_task(task_id)

@@ -76,6 +76,7 @@ def _needs_core_recreate(pixelle_video) -> bool:
     required_history_methods = (
         "remove_bgm",
         "update_bgm",
+        "update_title",
         "regenerate_all_audio",
         "regenerate_frame_audio",
         "regenerate_frame_media",

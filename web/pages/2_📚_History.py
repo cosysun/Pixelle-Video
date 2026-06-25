@@ -535,6 +535,7 @@ def _ensure_history_edit_capabilities(pixelle_video):
     required_methods = (
         "remove_bgm",
         "update_bgm",
+        "update_title",
         "regenerate_all_audio",
         "regenerate_frame_audio",
         "regenerate_frame_media",
@@ -825,6 +826,27 @@ def render_task_detail_modal(task_id: str, pixelle_video):
         st.markdown(f"**📝 {tr('history.detail.input_params')}**")
 
         input_params = metadata.get("input", {})
+        current_title = input_params.get("title") or getattr(storyboard, "title", "") or ""
+
+        edited_title = st.text_input(
+            tr("history.edit.title_label"),
+            value=current_title,
+            key=f"edit_title_{task_id}",
+        )
+        if st.button(
+            tr("history.edit.save_title"),
+            key=f"save_title_{task_id}",
+            use_container_width=True,
+        ):
+            if not edited_title.strip():
+                st.warning(tr("history.edit.title_required"))
+            else:
+                with st.spinner(tr("history.edit.title_processing")):
+                    _run_edit_action(
+                        lambda: pixelle_video.history.update_title(task_id, edited_title),
+                        tr("history.edit.title_success"),
+                        action_key=f"title_{task_id}",
+                    )
 
         # If this task ended in failure, surface the persisted error
         # message so the user can decide whether to resume or delete.

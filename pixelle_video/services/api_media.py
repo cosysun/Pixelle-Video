@@ -38,6 +38,10 @@ class APIProviderMediaService:
             "gemini-3.1-flash-image",
             "gemini-3-pro-image",
         ],
+        "hunyuan": [
+            "hy-image-v3.0",
+            "hy-image-lite",
+        ],
     }
 
     VIDEO_MODELS = {
@@ -631,6 +635,9 @@ class APIProviderMediaService:
             gemini_api_key=cfg["gemini"].get("api_key") or None,
             gemini_base_url=cfg["gemini"].get("base_url") or None,
             gemini_local_proxy=local_proxy if cfg["gemini"].get("use_proxy") else None,
+            hunyuan_api_key=cfg["hunyuan"].get("api_key") or None,
+            hunyuan_base_url=cfg["hunyuan"].get("base_url") or None,
+            hunyuan_local_proxy=local_proxy if cfg["hunyuan"].get("use_proxy") else None,
         )
 
     def _create_video_client(self):

@@ -10,12 +10,14 @@ try:
     from .image_seedream import SeedreamClient
     from .image_gpt import ImageGPT
     from .image_gemini import GeminiImageClient
+    from .image_hunyuan import HunyuanImageClient
     from .image_processor import ImageProcessor
 except ImportError:
     from .image_dashscope import DashScopeClient
     from .image_seedream import SeedreamClient
     from .image_gpt import ImageGPT
     from .image_gemini import GeminiImageClient
+    from .image_hunyuan import HunyuanImageClient
     from .image_processor import ImageProcessor
 
 class ImageClient:
@@ -31,10 +33,13 @@ class ImageClient:
                  ark_local_proxy: Optional[str] = None,
                  gemini_api_key: Optional[str] = None,
                  gemini_base_url: Optional[str] = None,
-                 gemini_local_proxy: Optional[str] = None):
+                 gemini_local_proxy: Optional[str] = None,
+                 hunyuan_api_key: Optional[str] = None,
+                 hunyuan_base_url: Optional[str] = None,
+                 hunyuan_local_proxy: Optional[str] = None):
         """
         Unified Image Generation Client
-        Routes requests to DashScope, Seedream, Gemini, or GPT based on model name.
+        Routes requests to DashScope, Seedream, Gemini, Hunyuan, or GPT based on model name.
         """
         # Initialize DashScope Client
         self.dashscope_client = DashScopeClient(
@@ -72,6 +77,13 @@ class ImageClient:
             api_key=gemini_api_key or Config.GEMINI_API_KEY,
             base_url=gemini_base_url or Config.GOOGLE_GEMINI_BASE_URL,
             local_proxy=gemini_local_proxy,
+        )
+
+        # Initialize Hunyuan Image Client (Tencent TokenHub)
+        self.hunyuan_client = HunyuanImageClient(
+            api_key=hunyuan_api_key or Config.HUNYUAN_API_KEY,
+            base_url=hunyuan_base_url or Config.HUNYUAN_BASE_URL,
+            local_proxy=hunyuan_local_proxy,
         )
 
         # Initialize Image Processor for downloads
@@ -165,6 +177,7 @@ class ImageClient:
         model_lower = model.lower()
         is_seedream = "seedream" in model_lower
         is_gemini = "gemini" in model_lower
+        is_hunyuan = "hy-image" in model_lower
         is_sora = "sora" in model_lower or "gpt" in model_lower
         
         # Prepare save directory
@@ -216,6 +229,26 @@ class ImageClient:
             except Exception as e:
                 logging.error(f"Gemini generation failed: {e}")
                 raise RuntimeError(f"Gemini generation failed: {e}") from e
+
+        elif is_hunyuan:
+            try:
+                logging.info(f"ImageClient requesting Hunyuan: {model}")
+                paths = self.hunyuan_client.generate_image(
+                    prompt=prompt,
+                    model=model,
+                    save_dir=save_dir,
+                    session_id=session_id,
+                    video_ratio=video_ratio,
+                    resolution=resolution,
+                    image_paths=image_paths,
+                )
+                if paths:
+                    generated_local_paths.extend(paths)
+                else:
+                    logging.error("Hunyuan returned no images")
+            except Exception as e:
+                logging.error(f"Hunyuan generation failed: {e}")
+                raise RuntimeError(f"Hunyuan generation failed: {e}") from e
 
         elif is_sora:
             # --- GPT/Sora Logic ---

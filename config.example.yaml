@@ -44,6 +44,10 @@ api_providers:
     api_key: ""
     base_url: "https://generativelanguage.googleapis.com"
     use_proxy: false
+  hunyuan:
+    api_key: ""
+    base_url: "https://tokenhub.tencentmaas.com"
+    use_proxy: false
 
 # ==================== Direct API TTS Model Configuration ====================
 # Optional: use third-party APIs for text-to-speech synthesis.

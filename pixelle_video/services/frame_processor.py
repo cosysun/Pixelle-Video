@@ -215,6 +215,12 @@ class FrameProcessor:
     ):
         """Step 1: Generate audio using TTS"""
         logger.debug(f"  1/4: Generating audio for frame {frame.index}...")
+        narration_text = (frame.narration or "").strip()
+        if not narration_text:
+            raise ValueError(
+                f"Frame {frame.index + 1} narration is empty; "
+                "please edit the narration before regenerating audio/video."
+            )
         
         # Generate output path using task_id
         from pixelle_video.utils.os_util import get_task_frame_path
@@ -222,7 +228,7 @@ class FrameProcessor:
         
         # Build TTS params based on inference mode
         tts_params = {
-            "text": frame.narration,
+            "text": narration_text,
             "inference_mode": config.tts_inference_mode,
             "output_path": output_path,
             "index": frame.index + 1,  # 1-based index for workflow

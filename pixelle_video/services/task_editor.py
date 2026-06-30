@@ -638,6 +638,13 @@ class TaskEditService:
         segment_paths = [frame.video_segment_path for frame in storyboard.frames]
         missing = [str(i + 1) for i, path in enumerate(segment_paths) if not path or not os.path.exists(path)]
         if missing:
+            if metadata.get("status") != "completed":
+                return await self._checkpoint_incomplete_edit(
+                    task_id,
+                    storyboard,
+                    metadata,
+                    missing,
+                )
             raise ValueError(f"Cannot rebuild final video; missing segment(s): {', '.join(missing)}")
 
         input_params = metadata.get("input", {})
@@ -678,4 +685,31 @@ class TaskEditService:
         await self.persistence.save_storyboard(task_id, storyboard)
         await self.persistence.save_task_metadata(task_id, metadata)
 
+        return result
+
+    async def _checkpoint_incomplete_edit(
+        self,
+        task_id: str,
+        storyboard: Storyboard,
+        metadata: Dict[str, Any],
+        missing_segments: list[str],
+    ) -> Dict[str, Any]:
+        """
+        Persist a local edit on a failed/incomplete task without requiring
+        final.mp4 to be rebuildable yet. The pipeline Resume button will
+        continue from the first frame without a segment.
+        """
+        await self.persistence.save_storyboard(task_id, storyboard)
+        await self.persistence.save_task_metadata(task_id, metadata)
+
+        result = dict(metadata.get("result", {}))
+        result.update(
+            {
+                "status": metadata.get("status", "failed"),
+                "missing_segments": missing_segments,
+                "n_frames": len(storyboard.frames),
+                "duration": sum(frame.duration or 0.0 for frame in storyboard.frames),
+                "resumable": True,
+            }
+        )
         return result

@@ -306,12 +306,14 @@ def render_advanced_settings():
         ark_cfg = api_cfg.get("ark", {})
         kling_cfg = api_cfg.get("kling", {})
         gemini_cfg = api_cfg.get("gemini", {})
+        hunyuan_cfg = api_cfg.get("hunyuan", {})
         default_api_base_urls = {
             "openai": "https://api.openai.com/v1",
             "dashscope": "https://dashscope.aliyuncs.com/api/v1",
             "ark": "https://ark.cn-beijing.volces.com/api/v3",
             "kling": "https://api-beijing.klingai.com",
             "gemini": "https://generativelanguage.googleapis.com",
+            "hunyuan": "https://tokenhub.tencentmaas.com",
         }
 
         with st.container(border=True):
@@ -453,6 +455,25 @@ def render_advanced_settings():
                     key="api_media_kling_secret_key",
                 )
 
+                st.markdown("**Tencent Hunyuan / HY-Image**")
+                api_hunyuan_use_proxy = st.checkbox(
+                    "Hunyuan 启用代理" if zh else "Use proxy for Hunyuan",
+                    value=bool(hunyuan_cfg.get("use_proxy", False)),
+                    key="api_media_hunyuan_use_proxy",
+                )
+                api_hunyuan_key = st.text_input(
+                    "Hunyuan API Key",
+                    value=hunyuan_cfg.get("api_key", ""),
+                    type="password",
+                    key="api_media_hunyuan_key",
+                )
+                api_hunyuan_base_url = st.text_input(
+                    "Hunyuan Base URL",
+                    value=hunyuan_cfg.get("base_url") or default_api_base_urls["hunyuan"],
+                    placeholder="https://tokenhub.tencentmaas.com",
+                    key="api_media_hunyuan_base_url",
+                )
+
         # ====================================================================
         # Direct API TTS providers
         # ====================================================================
@@ -590,6 +611,11 @@ def render_advanced_settings():
                         "api_key": api_gemini_key or "",
                         "base_url": api_gemini_base_url or "",
                         "use_proxy": bool(api_gemini_use_proxy),
+                    })
+                    config_manager.set_api_provider_config("hunyuan", {
+                        "api_key": api_hunyuan_key or "",
+                        "base_url": api_hunyuan_base_url or "",
+                        "use_proxy": bool(api_hunyuan_use_proxy),
                     })
 
                     tts_provider_config = {

@@ -56,6 +56,7 @@ class APIProvidersConfig(BaseModel):
     deepseek: APIKeyProviderConfig = Field(default_factory=APIKeyProviderConfig)
     gemini: APIKeyProviderConfig = Field(default_factory=APIKeyProviderConfig)
     ark: APIKeyProviderConfig = Field(default_factory=APIKeyProviderConfig)
+    hunyuan: APIKeyProviderConfig = Field(default_factory=APIKeyProviderConfig)
     kling: AccessSecretProviderConfig = Field(default_factory=AccessSecretProviderConfig)
 
 

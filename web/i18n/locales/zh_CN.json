@@ -409,7 +409,7 @@
     "history.edit.request_cancel": "请求停止当前编辑",
     "history.edit.cancel_requested": "已请求停止，当前步骤结束后会停止后续分镜",
     "history.edit.cancelled": "编辑已取消",
-    "history.edit.duplicate_ignored": "检测到重复提交，已忽略本次操作。",
+    "history.edit.duplicate_ignored": "该操作正在执行中，请勿重复点击。",
     "history.edit.success": "✅ 编辑完成，视频已更新",
     "history.edit.failed": "❌ 编辑失败：{error}",
     "history.page_info": "第 {page} 页 / 共 {total_pages} 页",

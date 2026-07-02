@@ -28,6 +28,13 @@ from web.utils.async_helpers import run_async
 from web.utils.streamlit_helpers import check_and_warn_selfhost_workflow
 from web.utils.tts_models_config import get_tts_models_config, set_default_tts_voice
 
+DEFAULT_IMAGE_PROMPT_PREFIX = (
+    "Minimalist black and white sketch style with muted watercolor accents, "
+    "colored pencil elements, expressive matchstick figure interacting with colorful "
+    "conceptual objects, loose clean lines, storybook illustration, soft lighting"
+)
+DEFAULT_IMAGE_WORKFLOW = "api/dashscope/wan2.7-image"
+
 
 def is_api_workflow(workflow_key: str | None) -> bool:
     """Return True for direct provider workflow keys such as api/dashscope/xxx."""
@@ -52,10 +59,10 @@ def render_style_config(pixelle_video):
         tts_config = comfyui_config["tts"]
         
         mode_options = ["local", "comfyui", "api"]
-        saved_mode = tts_config.get("inference_mode", "local")
-        default_mode_index = mode_options.index(saved_mode) if saved_mode in mode_options else 0
+        saved_mode = tts_config.get("inference_mode", "api")
+        default_mode_index = mode_options.index(saved_mode) if saved_mode in mode_options else mode_options.index("api")
 
-        # Inference mode selection
+        # Inference mode selection (initial value from config.yaml)
         tts_mode = st.radio(
             tr("tts.inference_mode"),
             mode_options,
@@ -908,7 +915,6 @@ def render_style_config(pixelle_video):
             workflow_options = [wf["display_name"] for wf in workflows]
             workflow_keys = [wf["key"] for wf in workflows]
         
-            # Default to first option (should be runninghub by sorting)
             default_workflow_index = 0
         
             # If user has a saved preference in config, try to match it
@@ -916,6 +922,8 @@ def render_style_config(pixelle_video):
             saved_workflow = comfyui_config.get("image", {}).get("default_workflow", "")
             if saved_workflow and saved_workflow in workflow_keys:
                 default_workflow_index = workflow_keys.index(saved_workflow)
+            elif DEFAULT_IMAGE_WORKFLOW in workflow_keys:
+                default_workflow_index = workflow_keys.index(DEFAULT_IMAGE_WORKFLOW)
         
             workflow_display = st.selectbox(
                 "Workflow",
@@ -944,11 +952,9 @@ def render_style_config(pixelle_video):
             size_info_text = tr('style.image_size_info', width=media_width, height=media_height)
             st.info(f"📐 {size_info_text}")
         
-            # Prompt prefix input
-            # Get current prompt_prefix from config (based on media type)
-            current_prefix = comfyui_config.get("image", {}).get("prompt_prefix", "")
-        
-            # Prompt prefix input (temporary, not saved to config)
+            current_prefix = comfyui_config.get("image", {}).get("prompt_prefix") or DEFAULT_IMAGE_PROMPT_PREFIX
+
+            # Prompt prefix (initial value from config.yaml; edits apply to current task only)
             prompt_prefix = st.text_area(
                 tr('style.prompt_prefix'),
                 value=current_prefix,

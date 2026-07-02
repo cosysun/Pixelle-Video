@@ -45,22 +45,32 @@
 
         .subtitle-wrap {
             position: absolute;
-            bottom: {{subtitle_bottom:number=220}}px;
-            left: 60px;
-            right: 60px;
-            text-align: center;
+            bottom: 220px;
+            left: 0;
+            right: 0;
+            display: flex;
+            justify-content: center;
+            padding: 0 40px;
+            box-sizing: border-box;
         }
 
+        /* 限制宽度 + 中文不断词，促使均衡折成约两行（参考 blur_card 底部字幕布局） */
         .subtitle {
             color: #fff;
-            font-size: {{subtitle_size:number=68}}px;
-            font-weight: 700;
-            line-height: 1.45;
-            letter-spacing: 2px;
+            font-size: 44px;
+            font-weight: 500;
+            line-height: 1.6;
+            letter-spacing: 0.5px;
+            text-align: center;
+            margin: 0;
+            width: 100%;
+            max-width: 24em;
+            word-break: keep-all;
+            text-wrap: balance;
             text-shadow:
-                -3px -3px 0 #000, 3px -3px 0 #000,
-                -3px  3px 0 #000, 3px  3px 0 #000,
-                0 0 24px rgba(0,0,0,0.6);
+                2px 2px 4px rgba(0, 0, 0, 0.9),
+                0 0 8px rgba(0, 0, 0, 0.8),
+                0 0 16px rgba(0, 0, 0, 0.6);
         }
 
         /* Optional keyword highlight: wrap a word in
@@ -68,7 +78,7 @@
            LLM-generated text is plain by default, so this stays unused
            unless the prompt explicitly asks for highlighted keywords. */
         .subtitle .highlight {
-            color: {{highlight_color:color=#ffd166}};
+            color: #ffd166;
         }
     </style>
 </head>

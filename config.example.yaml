@@ -75,17 +75,19 @@ comfyui:
   
   # TTS-specific configuration
   tts:
+    inference_mode: api  # local | comfyui | api
     default_workflow: selfhost/tts_edge.json  # TTS workflow to use
   
   # Image-specific configuration
   image:
     # Required: Default workflow to use (no fallback)
-    # Options: runninghub/image_flux.json (recommended, no local setup)
+    # Options: api/dashscope/wan2.7-image (recommended, direct API)
+    #          runninghub/image_flux.json (RunningHub)
     #          selfhost/image_flux.json (requires local ComfyUI)
-    default_workflow: runninghub/image_flux.json
+    default_workflow: api/dashscope/wan2.7-image
     
     # Image prompt prefix (optional)
-    prompt_prefix: "Minimalist black-and-white matchstick figure style illustration, clean lines, simple sketch style"
+    prompt_prefix: "Minimalist black and white sketch style with muted watercolor accents, colored pencil elements, expressive matchstick figure interacting with colorful conceptual objects, loose clean lines, storybook illustration, soft lighting"
   
   # Video-specific configuration
   video:
@@ -95,7 +97,7 @@ comfyui:
     default_workflow: runninghub/video_wan2.1_fusionx.json
     
     # Video prompt prefix (optional)
-    prompt_prefix: "Minimalist black-and-white matchstick figure style illustration, clean lines, simple sketch style"
+    prompt_prefix: "Minimalist black and white sketch style with muted watercolor accents, colored pencil elements, expressive matchstick figure interacting with colorful conceptual objects, loose clean lines, storybook illustration, soft lighting"
 
 # ==================== Template Configuration ====================
 # Configure default template for video generation

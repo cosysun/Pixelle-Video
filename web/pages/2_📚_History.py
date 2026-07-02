@@ -39,7 +39,11 @@ from web.state.session import (  # noqa: E402
     init_session_state,
 )
 from web.utils.async_helpers import run_async  # noqa: E402
-from web.utils.edit_action_guard import is_recent_duplicate_action  # noqa: E402
+from web.utils.edit_action_guard import (  # noqa: E402
+    clear_action_in_flight,
+    is_action_in_flight,
+    mark_action_in_flight,
+)
 from web.utils.tts_models_config import (  # noqa: E402
     get_tts_models_config,
     resolve_history_api_tts_voice_id,
@@ -494,19 +498,15 @@ def _run_edit_action(
     on_success=None,
 ):
     """Run a history edit action and refresh the page on success."""
-    duplicate_state_key = f"history_edit_completed_at_{action_key}" if action_key else None
-    now = datetime.now().timestamp()
-    if duplicate_state_key and is_recent_duplicate_action(
-        last_completed_at=st.session_state.get(duplicate_state_key),
-        now=now,
-    ):
+    if action_key and is_action_in_flight(st.session_state, action_key):
         st.warning(tr("history.edit.duplicate_ignored"))
         return
 
+    if action_key:
+        mark_action_in_flight(st.session_state, action_key)
+
     try:
         result = run_async(action())
-        if duplicate_state_key:
-            st.session_state[duplicate_state_key] = datetime.now().timestamp()
         if on_success:
             on_success(result)
         st.success(success_message)
@@ -528,6 +528,9 @@ def _run_edit_action(
             raise
         logger.exception(e)
         st.error(tr("history.edit.failed", error=str(e)))
+    finally:
+        if action_key:
+            clear_action_in_flight(st.session_state, action_key)
 
 
 def _ensure_history_edit_capabilities(pixelle_video):

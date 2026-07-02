@@ -409,7 +409,7 @@
     "history.edit.request_cancel": "Request Stop Current Edit",
     "history.edit.cancel_requested": "Stop requested. The edit will stop after the current step.",
     "history.edit.cancelled": "Edit cancelled",
-    "history.edit.duplicate_ignored": "Duplicate submission detected; this action was ignored.",
+    "history.edit.duplicate_ignored": "This action is already running; please wait.",
     "history.edit.success": "✅ Edit complete, video updated",
     "history.edit.failed": "❌ Edit failed: {error}",
     "history.page_info": "Page {page} / {total_pages}",

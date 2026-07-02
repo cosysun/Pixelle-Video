@@ -240,6 +240,7 @@ class ImageClient:
                     session_id=session_id,
                     video_ratio=video_ratio,
                     resolution=resolution,
+                    size=size,
                     image_paths=image_paths,
                 )
                 if paths:

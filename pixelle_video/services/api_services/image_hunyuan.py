@@ -28,6 +28,28 @@ except ImportError:
 
 DEFAULT_BASE_URL = "https://tokenhub.tencentmaas.com"
 
+# 混元 API resolution 格式 "宽:高"，见腾讯云混元生图文档
+_RATIO_TO_RESOLUTION = {
+    "9:16": "720:1280",
+    "16:9": "1280:720",
+    "1:1": "1024:1024",
+    "3:4": "768:1024",
+    "4:3": "1024:768",
+    "3:5": "768:1280",
+    "5:3": "1280:768",
+}
+
+# 文生图常用分桶（用于从任意 W*H snap 到最近支持尺寸）
+_T2I_RESOLUTIONS = [
+    (720, 1280),
+    (768, 1280),
+    (768, 1024),
+    (1024, 768),
+    (1024, 1024),
+    (1280, 720),
+    (768, 768),
+]
+
 
 class HunyuanImageClient:
     """腾讯混元生图客户端（TokenHub）。
@@ -79,6 +101,57 @@ class HunyuanImageClient:
                 )
         return urls
 
+    @staticmethod
+    def _parse_size(size: Optional[str]) -> Optional[tuple[int, int]]:
+        if not size:
+            return None
+        parts = size.replace("x", "*").split("*")
+        if len(parts) != 2:
+            return None
+        try:
+            w, h = int(parts[0]), int(parts[1])
+            if w > 0 and h > 0:
+                return w, h
+        except ValueError:
+            pass
+        return None
+
+    @classmethod
+    def _snap_to_nearest(cls, width: int, height: int, candidates: list[tuple[int, int]]) -> str:
+        target_ratio = width / height
+        best = min(
+            candidates,
+            key=lambda wh: abs(wh[0] / wh[1] - target_ratio),
+        )
+        return f"{best[0]}:{best[1]}"
+
+    @classmethod
+    def _resolve_resolution(
+        cls,
+        video_ratio: Optional[str] = None,
+        size: Optional[str] = None,
+        has_reference: bool = False,
+    ) -> str:
+        """Map Pixelle size/ratio to Hunyuan ``resolution`` string."""
+        if has_reference:
+            candidates = [(768, 768), (768, 1024), (1024, 768), (1024, 1024)]
+            parsed = cls._parse_size(size)
+            if parsed:
+                return cls._snap_to_nearest(parsed[0], parsed[1], candidates)
+            if video_ratio and video_ratio in _RATIO_TO_RESOLUTION:
+                ref_w, ref_h = map(int, _RATIO_TO_RESOLUTION[video_ratio].split(":"))
+                return cls._snap_to_nearest(ref_w, ref_h, candidates)
+            return "1024:1024"
+
+        parsed = cls._parse_size(size)
+        if parsed:
+            return cls._snap_to_nearest(parsed[0], parsed[1], _T2I_RESOLUTIONS)
+
+        if video_ratio and video_ratio in _RATIO_TO_RESOLUTION:
+            return _RATIO_TO_RESOLUTION[video_ratio]
+
+        return "1024:1024"
+
     def generate_image(
         self,
         prompt: str,
@@ -87,6 +160,7 @@ class HunyuanImageClient:
         session_id: Optional[str] = None,
         video_ratio: Optional[str] = None,
         resolution: Optional[str] = None,
+        size: Optional[str] = None,
         image_paths: Optional[List[str]] = None,
     ) -> List[str]:
         if not self.api_key:
@@ -96,12 +170,18 @@ class HunyuanImageClient:
 
         os.makedirs(save_dir, exist_ok=True)
         image_urls = self._prepare_images(image_paths)
+        hunyuan_resolution = self._resolve_resolution(
+            video_ratio=video_ratio,
+            size=size,
+            has_reference=bool(image_urls),
+        )
+        logging.info(f"Hunyuan resolution: {hunyuan_resolution} (ratio={video_ratio}, size={size})")
 
         is_lite = "lite" in model.lower()
         if is_lite:
-            urls = self._generate_lite(prompt, model)
+            urls = self._generate_lite(prompt, model, hunyuan_resolution)
         else:
-            urls = self._generate_v3(prompt, model, image_urls)
+            urls = self._generate_v3(prompt, model, image_urls, hunyuan_resolution)
 
         generated_paths = []
         for idx, url in enumerate(urls):
@@ -110,11 +190,12 @@ class HunyuanImageClient:
                 generated_paths.append(local_path)
         return generated_paths
 
-    def _generate_lite(self, prompt: str, model: str) -> List[str]:
+    def _generate_lite(self, prompt: str, model: str, resolution: str) -> List[str]:
         """HY-Image Lite 同步生成。"""
         payload = {
             "model": model,
             "prompt": prompt,
+            "resolution": resolution,
             "rsp_img_type": "url",
             # logo_add: 0 关闭水印 (原 API 参数 LogoAdd, 默认 1 会加水印)
             "logo_add": 0,
@@ -129,11 +210,18 @@ class HunyuanImageClient:
             data = resp.json()
         return self._extract_urls(data)
 
-    def _generate_v3(self, prompt: str, model: str, image_urls: List[str]) -> List[str]:
+    def _generate_v3(
+        self,
+        prompt: str,
+        model: str,
+        image_urls: List[str],
+        resolution: str,
+    ) -> List[str]:
         """HY-Image 3.0 异步生成：提交任务后轮询查询。"""
         submit_payload: dict = {
             "model": model,
             "prompt": prompt,
+            "resolution": resolution,
             # logo_add: 0 关闭水印 (原 API 参数 LogoAdd, 默认 1 会加水印)
             "logo_add": 0,
         }

@@ -93,7 +93,7 @@ class TTSComfyUIConfig(BaseModel):
 
 class TTSSubConfig(BaseModel):
     """TTS-specific configuration (under comfyui.tts)"""
-    inference_mode: str = Field(default="local", description="TTS inference mode: 'local' or 'comfyui'")
+    inference_mode: str = Field(default="api", description="TTS inference mode: 'local', 'comfyui', or 'api'")
     local: TTSLocalConfig = Field(default_factory=TTSLocalConfig, description="Local TTS (Edge TTS) configuration")
     comfyui: TTSComfyUIConfig = Field(default_factory=TTSComfyUIConfig, description="ComfyUI TTS configuration")
     
@@ -106,10 +106,17 @@ class TTSSubConfig(BaseModel):
 
 class ImageSubConfig(BaseModel):
     """Image-specific configuration (under comfyui.image)"""
-    default_workflow: Optional[str] = Field(default=None, description="Default image workflow (optional)")
+    default_workflow: Optional[str] = Field(
+        default="api/dashscope/wan2.7-image",
+        description="Default image workflow (optional)",
+    )
     prompt_prefix: str = Field(
-        default="Minimalist black-and-white matchstick figure style illustration, clean lines, simple sketch style",
-        description="Prompt prefix for all image generation"
+        default=(
+            "Minimalist black and white sketch style with muted watercolor accents, "
+            "colored pencil elements, expressive matchstick figure interacting with colorful "
+            "conceptual objects, loose clean lines, storybook illustration, soft lighting"
+        ),
+        description="Prompt prefix for all image generation",
     )
 
 
@@ -117,8 +124,12 @@ class VideoSubConfig(BaseModel):
     """Video-specific configuration (under comfyui.video)"""
     default_workflow: Optional[str] = Field(default=None, description="Default video workflow (optional)")
     prompt_prefix: str = Field(
-        default="Minimalist black-and-white matchstick figure style illustration, clean lines, simple sketch style",
-        description="Prompt prefix for all video generation"
+        default=(
+            "Minimalist black and white sketch style with muted watercolor accents, "
+            "colored pencil elements, expressive matchstick figure interacting with colorful "
+            "conceptual objects, loose clean lines, storybook illustration, soft lighting"
+        ),
+        description="Prompt prefix for all video generation",
     )
 
 

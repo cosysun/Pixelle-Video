@@ -27,7 +27,7 @@ class APIProviderMediaService:
             "wan2.6-t2i",
         ],
         "openai": [
-            "gpt-image-2",
+            "openai/gpt-image-2",
         ],
         "seedream": [
             "doubao-seedream-5-0-260128",
@@ -36,6 +36,7 @@ class APIProviderMediaService:
         ],
         "gemini": [
             "gemini-3.1-flash-image",
+            "gemini-3.1-flash-lite-image",
             "gemini-3-pro-image",
         ],
         "hunyuan": [

@@ -105,9 +105,12 @@ class GeminiImageClient:
             encoded = base64.b64encode(f.read()).decode("utf-8")
         return {"type": "image", "mime_type": self._mime_type(abs_path), "data": encoded}
 
-    def _map_image_size(self, resolution: Optional[str]) -> str:
+    def _map_image_size(self, resolution: Optional[str], model: str = "") -> str:
+        # gemini-3.1-flash-lite-image only supports 1K output (see Gemini image-gen docs).
+        if "flash-lite" in model.lower():
+            return "1K"
         if not resolution:
-            return "2K"
+            return "1K"
         return RESOLUTION_TO_IMAGE_SIZE.get(resolution.upper(), "2K")
 
     @staticmethod
@@ -171,7 +174,7 @@ class GeminiImageClient:
             "type": "image",
             "mime_type": "image/jpeg",
             "aspect_ratio": aspect_ratio or "16:9",
-            "image_size": self._map_image_size(resolution),
+            "image_size": self._map_image_size(resolution, model),
         }
 
         client = self._create_client()

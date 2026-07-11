@@ -48,6 +48,41 @@ class ImageGPT:
         self.max_attempts = 10
         self.image_processor = ImageProcessor(local_proxy=local_proxy)
 
+    # GPT Image 官方推荐尺寸（按宽高比就近映射）
+    _RECOMMENDED_SIZES = (
+        (1024, 1024),  # 1:1
+        (1536, 1024),  # landscape ≈ 3:2 / 16:9
+        (1024, 1536),  # portrait ≈ 2:3 / 9:16
+    )
+
+    @classmethod
+    def normalize_size(cls, size: str, multiple: int = 16) -> str:
+        """Map requested WxH to GPT recommended sizes by aspect ratio.
+
+        Examples:
+            1080x1080 / 1:1 → 1024x1024
+            1080x1920 / 9:16 → 1024x1536
+            1920x1080 / 16:9 → 1536x1024
+        """
+        if not size:
+            return "1024x1024"
+        parts = str(size).lower().replace("*", "x").split("x")
+        if len(parts) != 2:
+            return "1024x1024"
+        try:
+            width, height = int(parts[0].strip()), int(parts[1].strip())
+        except ValueError:
+            return "1024x1024"
+        if width <= 0 or height <= 0:
+            return "1024x1024"
+
+        target_ratio = width / height
+        best_w, best_h = min(
+            cls._RECOMMENDED_SIZES,
+            key=lambda wh: abs(wh[0] / wh[1] - target_ratio),
+        )
+        return f"{best_w}x{best_h}"
+
     def _encode_image_to_base64(self, image_path: str) -> str:
         """将本地图片转换为 Base64 编码"""
         if not image_path or not os.path.exists(image_path):
@@ -64,7 +99,7 @@ class ImageGPT:
             print(f"Error encoding image {image_path}: {e}")
             return image_path
 
-    def generate_image(self, prompt, size="1024x1024", quality="high", model="gpt-image-2",
+    def generate_image(self, prompt, size="1024x1024", quality="low", model="gpt-image-2",
                        save_dir=None, image_urls=None):
         """Generate a single image, download it, and return the local file path.
 
@@ -79,6 +114,11 @@ class ImageGPT:
 
         if not self.client:
             raise RuntimeError("OPENAI_API_KEY is not configured")
+
+        original_size = size
+        size = self.normalize_size(size)
+        if size != original_size:
+            print(f"GPT image size mapped to recommended: {original_size} -> {size}")
 
         attempts = 0
         last_error = None

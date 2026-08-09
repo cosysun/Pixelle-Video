@@ -52,6 +52,7 @@ class APIProvidersConfig(BaseModel):
     """Direct model provider API configuration"""
     common: APIProviderCommonConfig = Field(default_factory=APIProviderCommonConfig)
     openai: APIKeyProviderConfig = Field(default_factory=APIKeyProviderConfig)
+    openrouter: APIKeyProviderConfig = Field(default_factory=APIKeyProviderConfig)
     dashscope: APIKeyProviderConfig = Field(default_factory=APIKeyProviderConfig)
     deepseek: APIKeyProviderConfig = Field(default_factory=APIKeyProviderConfig)
     gemini: APIKeyProviderConfig = Field(default_factory=APIKeyProviderConfig)

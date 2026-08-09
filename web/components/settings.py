@@ -302,6 +302,7 @@ def render_advanced_settings():
         api_cfg = config_manager.get_api_providers_config()
         common_cfg = api_cfg.get("common", {})
         openai_cfg = api_cfg.get("openai", {})
+        openrouter_cfg = api_cfg.get("openrouter", {})
         dashscope_cfg = api_cfg.get("dashscope", {})
         ark_cfg = api_cfg.get("ark", {})
         kling_cfg = api_cfg.get("kling", {})
@@ -309,6 +310,7 @@ def render_advanced_settings():
         hunyuan_cfg = api_cfg.get("hunyuan", {})
         default_api_base_urls = {
             "openai": "https://api.openai.com/v1",
+            "openrouter": "https://openrouter.ai/api/v1",
             "dashscope": "https://dashscope.aliyuncs.com/api/v1",
             "ark": "https://ark.cn-beijing.volces.com/api/v3",
             "kling": "https://api-beijing.klingai.com",
@@ -370,6 +372,25 @@ def render_advanced_settings():
                     value=openai_cfg.get("base_url") or default_api_base_urls["openai"],
                     placeholder="https://api.openai.com/v1",
                     key="api_media_openai_base_url",
+                )
+
+                st.markdown("**OpenRouter Image**")
+                api_openrouter_use_proxy = st.checkbox(
+                    "OpenRouter 启用代理" if zh else "Use proxy for OpenRouter",
+                    value=bool(openrouter_cfg.get("use_proxy", False)),
+                    key="api_media_openrouter_use_proxy",
+                )
+                api_openrouter_key = st.text_input(
+                    "OpenRouter API Key",
+                    value=openrouter_cfg.get("api_key", ""),
+                    type="password",
+                    key="api_media_openrouter_key",
+                )
+                api_openrouter_base_url = st.text_input(
+                    "OpenRouter Base URL",
+                    value=openrouter_cfg.get("base_url") or default_api_base_urls["openrouter"],
+                    placeholder="https://openrouter.ai/api/v1",
+                    key="api_media_openrouter_base_url",
                 )
 
                 st.markdown("**DashScope / Wan / HappyHorse**")
@@ -590,6 +611,11 @@ def render_advanced_settings():
                         "api_key": api_openai_key or "",
                         "base_url": api_openai_base_url or "",
                         "use_proxy": bool(api_openai_use_proxy),
+                    })
+                    config_manager.set_api_provider_config("openrouter", {
+                        "api_key": api_openrouter_key or "",
+                        "base_url": api_openrouter_base_url or "",
+                        "use_proxy": bool(api_openrouter_use_proxy),
                     })
                     config_manager.set_api_provider_config("dashscope", {
                         "api_key": api_dashscope_key or "",

@@ -5,8 +5,8 @@
 """Direct API provider media generation adapter."""
 
 import asyncio
-from copy import deepcopy
 import os
+from copy import deepcopy
 from pathlib import Path
 from typing import Any, Optional
 
@@ -22,12 +22,18 @@ class APIProviderMediaService:
 
     IMAGE_MODELS = {
         "dashscope": [
+            "z-image-turbo",
             "wan2.7-image",
             "wan2.7-image-pro",
             "wan2.6-t2i",
         ],
         "openai": [
             "openai/gpt-image-2",
+        ],
+        "openrouter": [
+            "bytedance-seed/seedream-4.5",
+            "openai/gpt-image-1",
+            "sourceful/riverflow-v2-fast",
         ],
         "seedream": [
             "doubao-seedream-5-0-260128",
@@ -432,7 +438,6 @@ class APIProviderMediaService:
         image_paths: Optional[list[str]] = None,
         **params,
     ) -> MediaResult:
-        from pixelle_video.services.api_services.image_client import ImageClient
 
         client = self._create_image_client()
         save_dir = self._save_dir(output_path, "api_images")
@@ -450,6 +455,7 @@ class APIProviderMediaService:
             session_id=session_id,
             video_ratio=ratio,
             resolution=resolution,
+            provider=provider,
         )
 
         if not paths:
@@ -475,7 +481,6 @@ class APIProviderMediaService:
         height: Optional[int],
         **params,
     ) -> MediaResult:
-        from pixelle_video.services.api_services.video_client import VideoClient
 
         first_clip_path = params.get("first_clip_path") or params.get("first_video_path")
         reference_image_path = params.get("reference_image_path")
@@ -630,6 +635,11 @@ class APIProviderMediaService:
             gpt_api_key=cfg["openai"].get("api_key") or None,
             gpt_base_url=cfg["openai"].get("base_url") or None,
             local_proxy=local_proxy if cfg["openai"].get("use_proxy") else None,
+            openrouter_api_key=cfg["openrouter"].get("api_key") or None,
+            openrouter_base_url=cfg["openrouter"].get("base_url") or None,
+            openrouter_local_proxy=(
+                local_proxy if cfg["openrouter"].get("use_proxy") else None
+            ),
             ark_api_key=cfg["ark"].get("api_key") or None,
             ark_base_url=cfg["ark"].get("base_url") or None,
             ark_local_proxy=local_proxy if cfg["ark"].get("use_proxy") else None,

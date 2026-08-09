@@ -1,24 +1,25 @@
-import os
-import time
-import uuid
 import logging
+import os
 from typing import List, Optional
+
 from .config import Config
 
 try:
     from .image_dashscope import DashScopeClient
-    from .image_seedream import SeedreamClient
-    from .image_gpt import ImageGPT
     from .image_gemini import GeminiImageClient
+    from .image_gpt import ImageGPT
     from .image_hunyuan import HunyuanImageClient
+    from .image_openrouter import OpenRouterImageClient
     from .image_processor import ImageProcessor
+    from .image_seedream import SeedreamClient
 except ImportError:
     from .image_dashscope import DashScopeClient
-    from .image_seedream import SeedreamClient
-    from .image_gpt import ImageGPT
     from .image_gemini import GeminiImageClient
+    from .image_gpt import ImageGPT
     from .image_hunyuan import HunyuanImageClient
+    from .image_openrouter import OpenRouterImageClient
     from .image_processor import ImageProcessor
+    from .image_seedream import SeedreamClient
 
 class ImageClient:
     def __init__(self,
@@ -36,7 +37,10 @@ class ImageClient:
                  gemini_local_proxy: Optional[str] = None,
                  hunyuan_api_key: Optional[str] = None,
                  hunyuan_base_url: Optional[str] = None,
-                 hunyuan_local_proxy: Optional[str] = None):
+                 hunyuan_local_proxy: Optional[str] = None,
+                 openrouter_api_key: Optional[str] = None,
+                 openrouter_base_url: Optional[str] = None,
+                 openrouter_local_proxy: Optional[str] = None):
         """
         Unified Image Generation Client
         Routes requests to DashScope, Seedream, Gemini, Hunyuan, or GPT based on model name.
@@ -86,6 +90,17 @@ class ImageClient:
             local_proxy=hunyuan_local_proxy,
         )
 
+        openrouter_key = (openrouter_api_key or Config.OPENROUTER_API_KEY or "").strip()
+        self.openrouter_client = (
+            OpenRouterImageClient(
+                api_key=openrouter_key,
+                base_url=openrouter_base_url or Config.OPENROUTER_BASE_URL,
+                local_proxy=openrouter_local_proxy,
+            )
+            if openrouter_key
+            else None
+        )
+
         # Initialize Image Processor for downloads
         self.image_processor = ImageProcessor()
 
@@ -99,7 +114,8 @@ class ImageClient:
                        save_dir: Optional[str] = None,
                        session_id: Optional[str] = None,
                        video_ratio: Optional[str] = "16:9",
-                       resolution: Optional[str] = "2K") -> List[str]:
+                       resolution: Optional[str] = "2K",
+                       provider: Optional[str] = None) -> List[str]:
         """
         Generate images based on prompt and optional reference images.
 
@@ -162,7 +178,7 @@ class ImageClient:
                 print(f"Refs: {len(image_paths)}")
                 for p in image_paths:
                     if str(p).startswith("data:"):
-                        print(f" - [Base64图片]")
+                        print(" - [Base64图片]")
                     else:
                         print(f" - {p}")
             print(f"Model: {model}")
@@ -190,7 +206,21 @@ class ImageClient:
         
         generated_local_paths = []
 
-        if is_seedream:
+        if provider == "openrouter":
+            if not self.openrouter_client:
+                raise RuntimeError("OPENROUTER_API_KEY is not configured")
+            generated_local_paths.extend(
+                self.openrouter_client.generate_image(
+                    prompt=prompt,
+                    model=model,
+                    save_dir=save_dir,
+                    video_ratio=video_ratio or "16:9",
+                    resolution=resolution or "2K",
+                    image_paths=image_paths,
+                )
+            )
+
+        elif is_seedream:
             # --- Seedream Logic ---
             if not self.seedream_client:
                 raise RuntimeError("ARK_API_KEY is not configured")

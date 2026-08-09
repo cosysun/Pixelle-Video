@@ -41,6 +41,8 @@ class _ConfigMeta(type):
             "LOCAL_PROXY": ("common", "local_proxy", ""),
             "OPENAI_API_KEY": ("openai", "api_key", ""),
             "OPENAI_BASE_URL": ("openai", "base_url", ""),
+            "OPENROUTER_API_KEY": ("openrouter", "api_key", ""),
+            "OPENROUTER_BASE_URL": ("openrouter", "base_url", "https://openrouter.ai/api/v1"),
             "DASHSCOPE_API_KEY": ("dashscope", "api_key", ""),
             "DASHSCOPE_BASE_URL": ("dashscope", "base_url", ""),
             "DEEPSEEK_API_KEY": ("deepseek", "api_key", ""),

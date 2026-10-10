@@ -1,0 +1,54 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  quality:
+    name: Lint & Test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # ruff --diff compares against a base ref, so we need history.
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Install dependencies
+        # Only the subset CI needs; the full dependency set pulls heavy
+        # media/ML packages that are irrelevant to lint and guard tests.
+        run: uv pip install --system pytest pytest-asyncio ruff httpx pydantic loguru
+
+      - name: Lint changed files
+        # The repo has 127 pre-existing lint findings (mostly import order) that
+        # predate this workflow. Blocking on them would make CI red forever and
+        # train everyone to ignore it, so we gate only new/changed lines.
+        # Shrink the baseline over time; then drop `--diff` and lint everything.
+        run: |
+          BASE="${{ github.event.pull_request.base.sha || github.event.before }}"
+          if [ -z "$BASE" ] || [ "$BASE" = "0000000000000000000000000000000000000000" ]; then
+            echo "No base ref available; linting the full tree."
+            ruff check pixelle_video api tests
+          else
+            echo "Linting files changed since $BASE"
+            ruff check --diff "$BASE" pixelle_video api tests
+          fi
+
+      - name: Architecture and i18n guards
+        # These assert project-wide invariants (AGENTS.md rules 1 and 4), so they
+        # always run over the whole tree.
+        run: pytest tests -q

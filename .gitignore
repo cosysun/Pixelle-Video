@@ -54,7 +54,10 @@ test_outputs/
 *.mp3
 *.wav
 *.bak
+
+# Ignore scratch test scripts, but keep the real suite under tests/.
 test_*.py
+!tests/**
 
 !bgm/default.mp3
 

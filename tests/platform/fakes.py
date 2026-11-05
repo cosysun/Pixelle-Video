@@ -26,7 +26,9 @@ class MemoryStorage:
     async def get_json(self, key):
         return json.loads(self.objects[key])
 
-    async def download(self, key, path):
+    async def download(self, key, path, max_bytes=None):
+        if max_bytes is not None and len(self.objects[key]) > max_bytes:
+            raise ValueError("文件大小超过上传申请")
         Path(path).parent.mkdir(parents=True, exist_ok=True)
         Path(path).write_bytes(self.objects[key])
         return str(path)

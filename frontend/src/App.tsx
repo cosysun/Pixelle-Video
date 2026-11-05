@@ -1,7 +1,8 @@
 import { useEffect, useState } from "react";
-import { NavLink, Route, Routes, useNavigate } from "react-router-dom";
+import { NavLink, Route, Routes, useLocation, useNavigate } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
+  ChartNoAxesCombined,
   ArrowRight,
   Clapperboard,
   FolderOpen,
@@ -19,10 +20,19 @@ import Studio from "./pages/Studio";
 import Library from "./pages/Library";
 import WorkDetail from "./pages/WorkDetail";
 import SettingsPanel from "./pages/Settings";
+import Investment from "./pages/investment/Investment";
 import type { Job } from "./types";
 export default function App() {
   const client = useQueryClient();
   const navigate = useNavigate();
+  const location = useLocation();
+  const breadcrumb = location.pathname.startsWith("/investment")
+    ? "投资总览"
+    : location.pathname.startsWith("/works/")
+      ? "作品详情"
+      : location.pathname.startsWith("/works")
+        ? "作品库"
+        : "创作工作台";
   const me = useQuery({
     queryKey: ["me"],
     queryFn: () => api<{ username: string }>("/auth/me"),
@@ -77,6 +87,10 @@ export default function App() {
             <span>作品库</span>
             {count > 0 && <span className="nav-count">{count}</span>}
           </NavLink>
+          <NavLink to="/investment">
+            <ChartNoAxesCombined size={20} />
+            <span>投资总览</span>
+          </NavLink>
         </nav>
         <div className="sidebar-note">
           <p>
@@ -112,7 +126,7 @@ export default function App() {
       <div className="main-shell">
         <header className="topbar">
           <span className="breadcrumb">
-            工作空间 <span>/</span> <strong>创作工作台</strong>
+            工作空间 <span>/</span> <strong>{breadcrumb}</strong>
           </span>
           <div className="topbar-right">
             {count > 0 ? (
@@ -141,6 +155,7 @@ export default function App() {
               path="/"
               element={<Studio onSettings={() => setSettings(true)} />}
             />
+            <Route path="/investment" element={<Investment />} />
             <Route path="/works" element={<Library />} />
             <Route path="/works/:id" element={<WorkDetail />} />
             <Route
@@ -161,6 +176,10 @@ export default function App() {
         <NavLink to="/works">
           <FolderOpen size={21} />
           作品{count > 0 && <i />}
+        </NavLink>
+        <NavLink to="/investment">
+          <ChartNoAxesCombined size={21} />
+          投资
         </NavLink>
       </nav>
       {settings && <SettingsPanel onClose={() => setSettings(false)} />}

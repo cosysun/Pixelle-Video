@@ -1,0 +1,104 @@
+import { useState } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { ArrowDownUp, ArrowUpRight, CheckCircle2, Circle, Clock3, Download, History, Info, Pencil, Plus, RefreshCw, Search, ShieldCheck, Trash2, Wallet } from "lucide-react";
+import { Button, ErrorBox, Loading, Modal, Toast } from "../../components/ui";
+import { actions, amount, describe, investmentPost, investmentRequest, isOpening, isVoided, marketName, messageOf, numeric, overviewFrom, recordActionName, timestamp, tone, type InvestmentRecord, type Overview, type Position } from "./model";
+import InvestmentChart from "./InvestmentChart";
+import RecordModal from "./RecordModal";
+import ImportModal from "./ImportModal";
+import ValuationModal from "./ValuationModal";
+import HistoryModal from "./HistoryModal";
+import "./Investment.css";
+
+export default function Investment() {
+  const client = useQueryClient();
+  const overview = useQuery({ queryKey: ["investment", "overview"], queryFn: async () => overviewFrom(await investmentRequest<Partial<Overview>>("/overview")), retry: 1, refetchInterval: 60000 });
+  const positions = useQuery({ queryKey: ["investment", "positions"], queryFn: () => investmentRequest<{ items: Position[] }>("/positions"), retry: 1, refetchInterval: 60000 });
+  const records = useQuery({ queryKey: ["investment", "records"], queryFn: () => investmentRequest<{ items: InvestmentRecord[] }>("/records"), retry: 1 });
+  const [recordModal, setRecordModal] = useState<InvestmentRecord | "new" | null>(null);
+  const [importing, setImporting] = useState(false);
+  const [showDataNotes, setShowDataNotes] = useState(false);
+  const [valuation, setValuation] = useState<Position | null>(null);
+  const [history, setHistory] = useState<InvestmentRecord | null>(null);
+  const [voiding, setVoiding] = useState<InvestmentRecord | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<unknown>();
+  const [toast, setToast] = useState("");
+  const [search, setSearch] = useState("");
+  const [market, setMarket] = useState("");
+  const [recordType, setRecordType] = useState("");
+  const [showVoid, setShowVoid] = useState(false);
+  const [recordPage, setRecordPage] = useState(1);
+  const data = overview.data;
+  const holdings = (positions.data?.items || []).filter((item) => (!market || item.market === market) && (!search || `${item.name} ${item.symbol}`.toLowerCase().includes(search.toLowerCase())));
+  const allRecords = (records.data?.items || []).filter((item) => (showVoid || !isVoided(item)) && (!recordType || item.action === recordType)).sort((a, b) => Date.parse(b.occurred_at) - Date.parse(a.occurred_at));
+  const pages = Math.max(1, Math.ceil(allRecords.length / 20));
+  const activePage = Math.min(recordPage, pages);
+  const visibleRecords = allRecords.slice((activePage - 1) * 20, activePage * 20);
+  const reload = () => client.invalidateQueries({ queryKey: ["investment"] });
+  const saved = (message: string) => { setRecordModal(null); setValuation(null); setVoiding(null); setToast(message); void reload(); };
+  const quoteStale = (positions.data?.items || []).some((item) => item.stale || item.fx_stale) || (data?.cash_balances || []).some((item) => item.fx_stale);
+  const stale = quoteStale || !data?.updated_at || !Number.isFinite(Date.parse(data.updated_at)) || Date.now() - Date.parse(data.updated_at) > 5 * 60000;
+  const refresh = async () => {
+    setBusy(true); setError(undefined);
+    try { const result = await investmentPost<{ status?: string }>("/refresh"); setToast(result.status === "refreshing" ? "行情刷新已启动，完成后页面会自动更新" : "已请求刷新行情"); await reload(); }
+    catch (cause) { setError(cause); } finally { setBusy(false); }
+  };
+  const recordButtons = (item: InvestmentRecord) => <div className="investment-row-actions">{!isVoided(item) && !isOpening(item) && <><button title="编辑记录" aria-label={`编辑记录 ${item.id}`} onClick={() => setRecordModal(item)}><Pencil size={15} /></button><button title="作废记录" aria-label={`作废记录 ${item.id}`} onClick={() => { setError(undefined); setVoiding(item); }}><Trash2 size={15} /></button></>}<button title="修订历史" aria-label={`修订历史 ${item.id}`} onClick={() => setHistory(item)}><History size={16} /></button></div>;
+  const recordMoney = (item: InvestmentRecord) => item.action === "split" ? `${amount(item.quantity, false, 4)} 倍` : `${amount(item.amount)} ${item.currency}`;
+  return <div className="investment-page">
+    <div className="investment-heading"><div><h1>投资总览<span>。</span></h1></div><div className="investment-heading-actions"><Button variant="ghost" onClick={() => setShowDataNotes(true)}><Info size={17} />数据说明</Button><Button variant="secondary" onClick={() => setImporting(true)}><Download size={17} />导入账单</Button><Button onClick={() => setRecordModal("new")}><Plus size={18} />记一笔</Button></div></div>
+    <div className="investment-status-bar"><span><i className={stale ? "investment-dot-stale" : ""} /><span>{overview.isPending ? "正在加载资产数据" : stale ? "数据待更新" : "资产数据已更新"}</span><small>{timestamp(data?.updated_at)}</small></span><Button variant="ghost" busy={busy} onClick={() => void refresh()}><RefreshCw size={15} />刷新行情</Button></div>
+    <ErrorBox error={error} /><ErrorBox error={overview.error} />{overview.error && <Button variant="secondary" onClick={() => void reload()}>重试加载</Button>}
+    <section className="investment-totals" aria-label="资产汇总" aria-busy={overview.isPending}>
+      <article className="investment-total investment-total-main"><div><Wallet size={18} /><span>总资产</span><span className="investment-badge">CNY</span></div><strong><small>¥</small> {amount(data?.total_assets)}</strong><p>净投入 <b>¥ {amount(data?.net_invested)}</b></p><ArrowUpRight className="investment-total-watermark" size={86} /></article>
+      <article className="investment-total"><span>持仓市值</span><strong>¥ {amount(data?.market_value)}</strong><p>可用现金 <b>¥ {amount(data?.cash)}</b></p></article>
+      <article className="investment-total"><span>累计盈亏</span><strong className={tone(data?.cumulative_pnl)}>¥ {amount(data?.cumulative_pnl, true)}</strong><p title="累计盈亏 ÷ 累计净投入，含期初浮盈；出入金会改变此比例">本金收益比例 <b className={tone(data?.cumulative_return)}>{amount(data?.cumulative_return, true)}{numeric(data?.cumulative_return) === null ? "" : "%"}</b></p></article>
+      <article className="investment-total"><span>今日盈亏</span><strong className={tone(data?.daily_pnl)}>¥ {amount(data?.daily_pnl, true)}</strong></article>
+    </section>
+    {data && (!data.complete || data.warnings.length > 0) && <div className="investment-callout investment-quality-alert"><Info size={19} /><div><strong>{data.complete ? "部分数据需要核对" : "资产数据尚不完整"}</strong><p>{data.warnings[0] || "请补齐现金、行情或历史汇率。缺失金额显示 —，不计为零。"}</p><button className="investment-text-button" onClick={() => setShowDataNotes(true)}>查看说明 →</button></div></div>}
+    <div className="investment-chart-grid"><InvestmentChart metric="total_assets" title="总资产走势" /><InvestmentChart metric="cumulative_pnl" title="累计盈亏走势" /><InvestmentChart metric="time_weighted_return" title="组合收益率走势" /></div>
+    <section className="investment-panel" aria-label="持仓明细"><div className="investment-section-head"><div><h2>持仓明细 <small>{positions.data?.items?.length || 0} 项资产</small></h2></div></div>
+      <div className="investment-toolbar"><label className="investment-search"><Search size={17} /><input aria-label="搜索持仓" placeholder="搜索名称或代码" value={search} onChange={(event) => setSearch(event.target.value)} /></label><select aria-label="筛选持仓市场" value={market} onChange={(event) => setMarket(event.target.value)}><option value="">全部市场</option>{Array.from(new Set((positions.data?.items || []).map((item) => item.market))).map((key) => <option key={key} value={key}>{marketName(key)}</option>)}</select></div>
+      <ErrorBox error={positions.error} />{positions.isPending ? <Loading /> : !holdings.length ? <div className="investment-empty"><Wallet size={27} /><h3>{search || market ? "没有匹配的持仓" : positions.error ? "暂时无法获取持仓" : "还没有持仓"}</h3><p>{search || market ? "试试其他名称、代码或市场。" : "记下第一笔交易，或导入已有账单。"}</p></div> : <>
+        <div className="investment-table-scroll investment-desktop-table"><table><thead><tr><th>资产</th><th>数量 / 现价</th><th>总成本（CNY）</th><th>市值（CNY）</th><th>浮动盈亏（CNY）</th><th>今日涨跌</th><th>占总资产</th><th>行情</th></tr></thead><tbody>{holdings.map((item) => <tr key={`${item.market}:${item.symbol}`}><td><strong>{item.name || item.symbol}</strong><small>{item.symbol} · {marketName(item.market)}</small>{item.estimated && <span className="investment-badge investment-warning">估算</span>}{item.market !== "OTHER" && (item.stale || !item.price_at || Date.now() - Date.parse(item.price_at) > 86400000) && <span className="investment-badge investment-warning">{item.price_at ? "行情时间较早" : "行情缺失"}</span>}</td><td>{amount(item.quantity, false, 0)}<small>{amount(item.price, false, 3)} {item.currency}</small>{item.average_cost != null && <small>均价成本 {amount(item.average_cost, false, 3)} {item.currency}</small>}</td><td>{amount(item.cost)}</td><td><strong>{amount(item.market_value)}</strong><small>{amount(item.market_value_native)} {item.currency}</small></td><td className={tone(item.pnl)}>{amount(item.pnl, true)}</td><td className={tone(item.daily_change)}>{numeric(item.daily_change) === null ? "—" : `${amount(item.daily_change, true)}%`}</td><td>{numeric(item.weight) === null ? "—" : `${amount(item.weight)}%`}</td><td><small>{timestamp(item.price_at)}<br />{item.source || "行情缺失"}</small><FxNote value={item} currency={item.currency} />{item.market === "OTHER" && <button className="investment-text-button" onClick={() => setValuation(item)}>更新估值</button>}</td></tr>)}</tbody></table></div>
+        <div className="investment-mobile-holdings">{holdings.map((item) => <article key={`${item.market}:${item.symbol}`}><div className="investment-section-head"><div><strong>{item.name || item.symbol}</strong><small>{item.symbol} · {marketName(item.market)}</small></div>{item.estimated && <span className="investment-badge investment-warning">估算</span>}{item.market !== "OTHER" && (item.stale || !item.price_at || Date.now() - Date.parse(item.price_at) > 86400000) && <span className="investment-badge investment-warning">{item.price_at ? "行情时间较早" : "行情缺失"}</span>}</div><dl><div><dt>市值（CNY）</dt><dd>{amount(item.market_value)}</dd></div><div><dt>浮动盈亏（CNY）</dt><dd className={tone(item.pnl)}>{amount(item.pnl, true)}</dd></div><div><dt>数量 / 现价</dt><dd>{amount(item.quantity, false, 0)} / {amount(item.price, false, 3)} {item.currency}</dd></div><div><dt>总成本（CNY）</dt><dd>{amount(item.cost)}</dd></div><div><dt>今日涨跌</dt><dd className={tone(item.daily_change)}>{numeric(item.daily_change) === null ? "—" : `${amount(item.daily_change, true)}%`}</dd></div><div><dt>占总资产</dt><dd>{numeric(item.weight) === null ? "—" : `${amount(item.weight)}%`}</dd></div></dl><div className="investment-position-footer"><div className="investment-position-source"><small>{item.source || "行情缺失"} · {timestamp(item.price_at)}</small><FxNote value={item} currency={item.currency} /></div>{item.market === "OTHER" && <button className="investment-text-button" onClick={() => setValuation(item)}>更新估值</button>}</div></article>)}</div>
+      </>}
+    </section>
+    <section className="investment-panel" aria-label="现金余额"><div className="investment-section-head"><div><h2>现金余额</h2></div><ArrowDownUp size={18} /></div>{data?.cash_balances.length ? <div className="investment-cash-list">{data.cash_balances.map((balance) => <div key={balance.currency}><span className="investment-currency">{balance.currency}</span><div><strong>{amount(balance.balance)}</strong><small>汇率 {amount(balance.rate, false, 4)}</small><FxNote value={balance} currency={balance.currency} /></div><span>¥ {amount(balance.cny_value)}</span></div>)}</div> : <p className="investment-empty">暂无现金余额，入金后会按币种显示。</p>}</section>
+    <section className="investment-panel" aria-label="投资流水"><div className="investment-section-head"><div><h2>投资流水</h2></div><Button variant="ghost" onClick={() => setRecordModal("new")}><Plus size={16} />新增记录</Button></div>
+      <div className="investment-toolbar"><select aria-label="筛选记录类型" value={recordType} onChange={(event) => { setRecordType(event.target.value); setRecordPage(1); }}><option value="">全部类型</option>{Object.entries(actions).map(([key, label]) => <option key={key} value={key}>{label}</option>)}<option value="opening_position">期初持仓</option><option value="opening_cash">期初现金</option><option value="opening_capital">期初投入</option></select><label className="investment-check"><input type="checkbox" checked={showVoid} onChange={(event) => { setShowVoid(event.target.checked); setRecordPage(1); }} />显示已作废</label><span className="investment-note">{allRecords.length} 条记录</span></div>
+      <ErrorBox error={records.error} />{records.isPending ? <Loading /> : !visibleRecords.length ? <div className="investment-empty"><History size={27} /><h3>{records.error ? "暂时无法获取流水" : "暂无投资流水"}</h3></div> : <>
+        <div className="investment-table-scroll investment-desktop-table"><table><thead><tr><th>发生时间</th><th>类型 / 资产</th><th>金额 / 比例</th><th>数量 / 单价</th><th>结算与费用</th><th>备注</th><th>操作</th></tr></thead><tbody>{visibleRecords.map((item) => <tr key={item.id} className={isVoided(item) ? "investment-voided" : ""}><td>{timestamp(item.occurred_at, item.date_only)}<small>{item.date_only ? "仅日期" : "北京时间"}</small></td><td><span className="investment-badge">{recordActionName(item.action)}</span><strong>{item.name || item.symbol || item.currency}</strong><small>{item.symbol} {item.market ? marketName(item.market) : ""}</small>{isOpening(item) && <small>期初基线 · 不可编辑</small>}{isVoided(item) && <small>已作废</small>}</td><td>{recordMoney(item)}</td><td>{amount(item.quantity, false, 0)}<small>{amount(item.price, false, 3)} {item.currency}</small></td><td>{item.settlement_currency && <span>{amount(item.settlement_amount)} {item.settlement_currency}</span>}<small>原币费用 {amount(item.fee)} {item.currency}</small>{item.settlement_fee != null && <small>结算费用 {amount(item.settlement_fee)} {item.settlement_currency}</small>}{item.estimated && <span className="investment-badge investment-warning">结算估算</span>}</td><td className="investment-record-note">{item.note || "—"}{item.external_id && <small>流水号 {item.external_id}</small>}</td><td>{recordButtons(item)}</td></tr>)}</tbody></table></div>
+        <div className="investment-mobile-records">{visibleRecords.map((item) => <article key={item.id} className={isVoided(item) ? "investment-voided" : ""}><div className="investment-section-head"><span><span className="investment-badge">{recordActionName(item.action)}</span> <strong>{item.name || item.symbol || item.currency}</strong></span><strong>{recordMoney(item)}</strong></div><p className="investment-note">{timestamp(item.occurred_at, item.date_only)} · {item.date_only ? "仅日期" : "北京时间"}{isVoided(item) ? " · 已作废" : ""}{isOpening(item) ? " · 期初基线不可编辑" : ""}</p>{item.settlement_currency && <p>结算 {amount(item.settlement_amount)} {item.settlement_currency}{item.estimated ? "（估算）" : ""}</p>}{item.note && <p className="investment-record-note">{item.note}</p>}<div className="investment-position-footer"><small>费用 {amount(item.fee)} {item.currency}</small>{recordButtons(item)}</div></article>)}</div>
+        <div className="investment-pagination"><span>第 {activePage} / {pages} 页</span><Button variant="secondary" disabled={activePage === 1} onClick={() => setRecordPage(activePage - 1)}>上一页</Button><Button variant="secondary" disabled={activePage === pages} onClick={() => setRecordPage(activePage + 1)}>下一页</Button></div>
+      </>}
+    </section>
+    {recordModal && <RecordModal record={recordModal === "new" ? undefined : recordModal} onClose={() => setRecordModal(null)} onSaved={() => saved(recordModal === "new" ? "记录已保存" : "记录已更新，历史版本已保留")} />}
+    {showDataNotes && <Modal title="数据说明" onClose={() => setShowDataNotes(false)} wide><Quality data={data} stale={stale} positions={positions.data?.items || []} /></Modal>}
+    {importing && <ImportModal onClose={() => setImporting(false)} onImported={() => void reload()} />}
+    {valuation && <ValuationModal position={valuation} onClose={() => setValuation(null)} onSaved={() => saved("手动估值已保存")} />}
+    {history && <HistoryModal record={history} onClose={() => setHistory(null)} />}
+    {voiding && <Modal title="作废投资记录" onClose={() => setVoiding(null)}><div className="investment-form"><p>确认作废这条{recordActionName(voiding.action)}记录？</p><p className="investment-note">{timestamp(voiding.occurred_at, voiding.date_only)} · {voiding.name || voiding.symbol || voiding.currency} · {recordMoney(voiding)}</p><p>作废后将重新计算资产与收益，原记录与修订历史仍可查阅。</p><ErrorBox error={error} /><div className="investment-modal-actions"><Button variant="secondary" disabled={busy} onClick={() => setVoiding(null)}>取消</Button><Button variant="danger" busy={busy} onClick={async () => { setBusy(true); setError(undefined); try { await investmentRequest(`/records/${encodeURIComponent(voiding.id)}`, { method: "DELETE" }); saved("记录已作废，历史版本已保留"); } catch (cause) { setError(cause); } finally { setBusy(false); } }}>确认作废</Button></div></div></Modal>}
+    {toast && <Toast message={toast} onClose={() => setToast("")} />}
+  </div>;
+}
+function Quality({ data, stale, positions = [] }: { data?: Overview; stale: boolean; positions?: Position[] }) {
+  const curve = useQuery({ queryKey: ["investment", "curve", "month"], queryFn: () => investmentRequest<{ return_note?: string }>("/curve?period=month"), retry: 1 });
+  const migration = data?.migration || {};
+  const warnings = [...(data?.warnings || []), ...(Array.isArray(migration.warnings) ? migration.warnings.map(messageOf) : [])];
+  const snapshotCheck = (migration.opening_snapshot_check || migration.opening_snapshot_reconciliation) as Record<string, unknown> | undefined;
+  const checks = [
+    ["资产、现金与历史汇率完整", !!data?.complete],
+    ["行情已更新", !stale],
+    ["历史账本已迁移", !!migration.source_hash && numeric(migration.record_count) !== null],
+    ["结算金额与其他资产估值已核对", !!data?.complete && !data?.estimated && !positions.some((item) => item.estimated || item.market === "OTHER" && item.source !== "manual")],
+  ] as const;
+  const migrationLabels: Record<string, string> = { status: "迁移状态", imported: "已导入记录", record_count: "记录数", imported_records: "已导入记录", inception: "期初日期", inception_date: "期初日期", snapshot_date: "快照日期", completed_at: "完成时间" };
+  return <section id="investment-quality" className="investment-panel" aria-label="数据质量与迁移清单"><div className="investment-section-head"><div><h2>数据质量与迁移清单</h2></div><ShieldCheck size={20} /></div><ul className="investment-checklist">{checks.map(([label, checked]) => <li key={label}>{checked ? <CheckCircle2 size={17} /> : <Circle size={17} />}<span>{label}</span><small>{checked ? "已就绪" : "待核对"}</small></li>)}</ul><details className="investment-calculation-notes"><summary>计算口径与曲线说明</summary><div><p>总资产、持仓成本、市值及盈亏均以人民币汇总；现价与均价成本按标的原币种显示。外币现金随汇率重估。</p><p>累计盈亏为总资产减累计净投入。本金收益比例为累计盈亏除以净投入，含期初浮盈；出入金会改变该比例。</p><p>{curve.data?.return_note || "组合收益率从期初资产市值的 0% 起算，使用时间加权口径剔除出入金，非年化。切换时间范围不会重设起点。"}</p><p>期初或出入金估值使用较早的价格、汇率时标为估算；缺失区间不连线。缺少出入金边界估值时，累计收益率保持缺失，待补齐后重算。</p><p>当日盈亏扣除当日净出入金，以北京时间零点资产为基准。单只证券涨跌与所属市场前收盘价比较。</p><p>换汇、交易与费用按结算币种计入现金。缺少行情或汇率时显示 —。曲线支持悬停、触摸及方向键查看。</p></div></details>{data?.history_note && <p className="investment-callout">{data.history_note}</p>}{snapshotCheck && <p className="investment-callout">期初快照核对：{snapshotCheck.matched === true ? "数量一致" : snapshotCheck.status === "compared" ? `存在 ${Array.isArray(snapshotCheck.discrepancies) ? snapshotCheck.discrepancies.length : 0} 项差异` : "待核对"}。仅核对数量，保留原账本。</p>}<div className="investment-migration-meta">{Object.entries(migrationLabels).filter(([key]) => migration[key] != null && typeof migration[key] !== "object").map(([key, label]) => <span key={key}>{label}：{describe(migration[key])}</span>)}</div>{warnings.length > 0 && <details className="investment-warnings"><summary>查看 {warnings.length} 条数据提示</summary><ul>{warnings.map((warning, i) => <li key={i}>{warning}</li>)}</ul></details>}<div className="investment-sessions">{data?.sessions.map((session) => <span key={session.market}><Clock3 size={12} />{marketName(session.market)} · {({ open: "交易中", break: "午间休市", closed: "休市", unknown: "状态未知" } as Record<string, string>)[session.state] || session.state}{session.next_open && <small>下次开市 {timestamp(session.next_open)}</small>}</span>)}</div></section>;
+}
+
+function FxNote({ value, currency }: { value: { fx_at?: string | null; fx_source?: string | null; fx_stale?: boolean }; currency: string }) {
+  if (currency === "CNY") return null;
+  return <small className={`investment-fx-note ${value.fx_stale ? "investment-warning-text" : ""}`}>汇率来源 {value.fx_source || "待补齐"} · {timestamp(value.fx_at)}{value.fx_stale ? " · 汇率待更新" : ""}</small>;
+}

@@ -18,6 +18,7 @@
 
 - [部署、COS、迁移和运维](docs/deployment.md)
 - [架构与文章模块扩展](docs/architecture.md)
+- [投资资产跟踪、账本迁移与计算口径](docs/investment.md)
 - [归档改造方案](docs/plans/2026-11-05-creation-platform-redesign.md)
 
 ## 验证

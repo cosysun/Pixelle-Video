@@ -29,6 +29,9 @@ class Platform:
         self.jobs.register("video.generate", self.generate_video)
         self.jobs.register("video.edit", self.edit_video)
         self.jobs.register("work.delete", self.delete_work)
+        from pixelle_video.investment.service import InvestmentService
+
+        self.investment = InvestmentService(self.database)
 
     async def start(self):
         # Reconcile directory status after a crash without repeating provider calls.
@@ -51,8 +54,10 @@ class Platform:
                     logger.warning("COS 暂不可用，已在数据库标记中断")
         await self.jobs.start()
         self.maintenance = __import__("asyncio").create_task(self._maintenance())
+        await self.investment.start()
 
     async def stop(self):
+        await self.investment.stop()
         self.maintenance.cancel()
         try:
             await self.maintenance

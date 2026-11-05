@@ -75,8 +75,26 @@ class COSStorage:
 
         return await asyncio.to_thread(read)
 
-    async def download(self, key, path):
+    async def download(self, key, path, max_bytes=None):
         Path(path).parent.mkdir(parents=True, exist_ok=True)
+        if max_bytes is not None:
+
+            def bounded_download():
+                result = self.client.get_object(Bucket=self.bucket, Key=self.key(key))
+                stream = result["Body"].get_raw_stream()
+                try:
+                    total = 0
+                    with Path(path).open("wb") as output:
+                        while chunk := stream.read(min(64 * 1024, max_bytes - total + 1)):
+                            total += len(chunk)
+                            if total > max_bytes:
+                                raise ValueError("文件大小超过上传申请")
+                            output.write(chunk)
+                finally:
+                    stream.close()
+
+            await asyncio.to_thread(bounded_download)
+            return str(path)
         await asyncio.to_thread(
             self.client.download_file, Bucket=self.bucket, Key=self.key(key), DestFilePath=str(path)
         )

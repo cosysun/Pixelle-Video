@@ -27,6 +27,7 @@ Linux Environment Requirements:
 
 import asyncio
 import html as html_escape
+import math
 import os
 import re
 import tempfile
@@ -308,6 +309,36 @@ class HTMLFrameGenerator:
 
         return re.sub(PARAM_PATTERN, replacer, html)
 
+    def validate_parameter_values(self, values: Dict[str, Any]) -> Dict[str, Any]:
+        result = dict(values)
+        for name, definition in self.parse_template_parameters().items():
+            if name not in result or result[name] is None:
+                continue
+            value = result[name]
+            kind = definition["type"]
+            if kind == "text":
+                valid = isinstance(value, str) and len(value) <= 100000
+            elif kind == "color":
+                valid = isinstance(value, str) and bool(
+                    re.fullmatch(
+                        r"#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})", value
+                    )
+                )
+            elif kind == "bool":
+                valid = isinstance(value, bool)
+            else:
+                valid = not isinstance(value, bool) and isinstance(value, (str, int, float))
+                try:
+                    number = float(value) if valid else float("nan")
+                    valid = math.isfinite(number) and abs(number) <= 100000
+                except (ValueError, OverflowError):
+                    valid = False
+                if valid:
+                    result[name] = number
+            if not valid:
+                raise ValueError(f"模板参数 {name} 的值无效")
+        return result
+
     @classmethod
     async def _ensure_browser(cls):
         """Each task/preview owns its browser; no cross-thread event-loop sharing."""
@@ -326,7 +357,7 @@ class HTMLFrameGenerator:
                     "--disable-dev-shm-usage",
                     "--disable-gpu",
                     "--disable-extensions",
-                ]
+                ],
             )
         except Exception:
             await playwright.stop()
@@ -391,8 +422,14 @@ class HTMLFrameGenerator:
         if ext:
             context.update(ext)
 
+        context = self.validate_parameter_values(context)
+
         safe_context = {
-            key: html_escape.escape(str(value), quote=True) if isinstance(value, str) else value
+            key: (
+                value
+                if isinstance(value, bool) or value is None
+                else html_escape.escape(str(value), quote=True)
+            )
             for key, value in context.items()
         }
         html = self._replace_parameters(self.template, safe_context)

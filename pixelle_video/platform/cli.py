@@ -156,6 +156,22 @@ async def import_history(platform, root):
 
 
 async def run(args):
+    if args.command == "investment-migrate":
+        import os
+
+        from pixelle_video.investment.migration import migrate_legacy
+        from pixelle_video.investment.service import InvestmentService
+        from pixelle_video.platform.database import Database
+
+        database = Database(os.getenv("PIXELLE_DATABASE", "data/platform.sqlite3"))
+        try:
+            report = migrate_legacy(database, Path(args.root).resolve())
+            engine = InvestmentService(database)
+            engine.rebuild_history()
+            print(json.dumps(report, ensure_ascii=False, indent=2))
+        finally:
+            database.close()
+        return
     if args.command == "template-covers":
         from pixelle_video.platform.template_previews import prepare_template_covers
 
@@ -191,6 +207,8 @@ def main():
     load_dotenv()
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest="command", required=True)
+    investment = commands.add_parser("investment-migrate", help="迁移旧投资账本，保留源文件")
+    investment.add_argument("--root", required=True, help="旧 portfolio-index 项目路径")
     resources = commands.add_parser("resources", help="Import bundled and custom resources to COS")
     resources.add_argument("--root", default=".")
     history = commands.add_parser(

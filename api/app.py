@@ -54,6 +54,31 @@ def create_app(platform=None):
     failures = defaultdict(deque)
     cookie_secure = os.getenv("PIXELLE_COOKIE_SECURE", "true").lower() == "true"
 
+    def protect(response, request):
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["Referrer-Policy"] = "no-referrer"
+        response.headers["X-Frame-Options"] = "DENY"
+        response.headers["Content-Security-Policy"] = "; ".join(
+            (
+                "default-src 'self'",
+                "script-src 'self'",
+                "style-src 'self' 'unsafe-inline'",
+                "img-src 'self' data: blob: https:",
+                "media-src 'self' blob: https:",
+                "connect-src 'self' https://*.myqcloud.com",
+                "font-src 'self' data:",
+                "object-src 'none'",
+                "base-uri 'none'",
+                "frame-ancestors 'none'",
+                "form-action 'self'",
+            )
+        )
+        if cookie_secure:
+            response.headers["Strict-Transport-Security"] = "max-age=31536000"
+        if request.url.path.startswith("/api/"):
+            response.headers["Cache-Control"] = "no-store"
+        return response
+
     def service(request):
         return request.app.state.platform
 
@@ -99,13 +124,9 @@ def create_app(platform=None):
                 except ValueError:
                     valid = False
                 if not valid:
-                    return Response("Invalid origin", status_code=403)
+                    return protect(Response("Invalid origin", status_code=403), request)
         response = await call_next(request)
-        response.headers["X-Content-Type-Options"] = "nosniff"
-        response.headers["Referrer-Policy"] = "no-referrer"
-        if request.url.path.startswith("/api/"):
-            response.headers["Cache-Control"] = "no-store"
-        return response
+        return protect(response, request)
 
     @app.exception_handler(ValueError)
     async def invalid(request, error):
@@ -167,9 +188,9 @@ def create_app(platform=None):
 
     api = APIRouter(prefix="/api", dependencies=[Depends(authenticated)])
 
-    from api.routes import previews, shared, video, works
+    from api.routes import investment, previews, shared, video, works
 
-    for module in (shared, previews, video, works):
+    for module in (shared, previews, video, works, investment):
         module.mount(api, service)
 
     app.include_router(api)

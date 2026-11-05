@@ -25,7 +25,9 @@ class ResourceService:
         )
         items = {row["id"]: {**row, "metadata": json.loads(row["metadata"])} for row in rows}
         if kind in {None, "template"}:
-            items.update({key: self._public_builtin(value) for key, value in self.builtin_templates.items()})
+            items.update(
+                {key: self._public_builtin(value) for key, value in self.builtin_templates.items()}
+            )
         return list(items.values())
 
     @staticmethod
@@ -110,9 +112,11 @@ class ResourceService:
         params["template_id"] = template["id"]
         from pixelle_video.services.frame_html import HTMLFrameGenerator
 
-        params["media_width"], params["media_height"] = HTMLFrameGenerator(
-            str(template_path)
-        ).get_media_size()
+        generator = HTMLFrameGenerator(str(template_path))
+        params["template_params"] = generator.validate_parameter_values(
+            params.get("template_params") or {}
+        )
+        params["media_width"], params["media_height"] = generator.get_media_size()
         bgm_id = params.get("bgm_id") or params.get("bgm_path")
         if bgm_id:
             if isinstance(bgm_id, str) and bgm_id.startswith("asset://"):

@@ -1,5 +1,8 @@
 """Shared settings, models, resources and uploads."""
 
+import asyncio
+import tempfile
+from pathlib import Path
 from uuid import uuid4
 
 from fastapi import HTTPException, Request
@@ -9,6 +12,8 @@ from pixelle_video.platform.security import SECRET_FIELDS, redact
 
 
 def mount(api, service):
+    upload_validation_lock = asyncio.Semaphore(1)
+
     @api.get("/settings")
     async def settings():
         from pixelle_video.config import config_manager
@@ -144,17 +149,35 @@ def mount(api, service):
 
     @api.post("/uploads/{asset_id}/confirm")
     async def confirm_upload(asset_id: str, request: Request):
-        p = service(request)
-        row = p.database.one("SELECT * FROM assets WHERE id=?", (asset_id,))
-        if not row:
-            raise HTTPException(404, "上传不存在")
-        head = await p.storage.head(row["object_key"])
-        if (
-            int(head["Content-Length"]) != row["size"]
-            or head.get("Content-Type", "").split(";")[0] != row["content_type"]
-        ):
-            raise ValueError("文件大小或类型与上传申请不一致")
-        p.database.execute("UPDATE assets SET confirmed=1 WHERE id=?", (asset_id,))
+        from pixelle_video.platform.upload_validation import validate_upload
+        from pixelle_video.services.persistence import file_digest
+
+        async with upload_validation_lock:
+            p = service(request)
+            row = p.database.one("SELECT * FROM assets WHERE id=?", (asset_id,))
+            if not row:
+                raise HTTPException(404, "上传不存在")
+            if row["confirmed"]:
+                return {"id": asset_id}
+            head = await p.storage.head(row["object_key"])
+            if (
+                int(head["Content-Length"]) != row["size"]
+                or head.get("Content-Type", "").split(";")[0] != row["content_type"]
+            ):
+                raise ValueError("文件大小或类型与上传申请不一致")
+            with tempfile.TemporaryDirectory(prefix="pixelle-upload-") as directory:
+                path = Path(directory) / ("media" + Path(row["object_key"]).suffix)
+                await p.storage.download(row["object_key"], path, max_bytes=row["size"])
+                await asyncio.to_thread(validate_upload, path, row["content_type"], row["size"])
+                digest = await asyncio.to_thread(file_digest, path)
+                # The client only receives PUT permission for the pending key.
+                # Publish the checked bytes at a separate key it cannot overwrite.
+                key = f"resources/{row['kind']}/{asset_id}/{digest}{path.suffix}"
+                await p.storage.upload(key, path, row["content_type"])
+                p.database.execute(
+                    "UPDATE assets SET object_key=?, confirmed=1 WHERE id=? AND confirmed=0",
+                    (key, asset_id),
+                )
         return {"id": asset_id}
 
     @api.get("/voices")

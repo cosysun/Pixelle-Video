@@ -1385,6 +1385,17 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#2026-11-05" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        微信访问恢复与安全加固（2026-11-05）
+      
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -1451,11 +1462,18 @@
 <li>2026-11-05 下拉框统一外观：修复配音服务紧凑 select 的原生箭头/边框叠加，补足右侧间距，全站 select 使用一致的单箭头；保留原生选项交互，强制颜色模式沿用系统箭头。</li>
 </ul>
 <h2 id="_7">已确认的外部限制<a class="headerlink" href="#_7" title="Permanent link">&para;</a></h2>
+<p>2026-11-05 投资页面发布（<code>investment-20261105-224544</code>）：新增 <code>/investment</code>、鉴权投资接口、独立 60 秒采集、Excel/CSV 导入与审计记录，以及总资产、累计盈亏和跟踪以来 TWR 三张曲线。收益率以 2026 年 10 月 20 日日终资产市值为 0% 基准；数量显示整数，现价与单位成本三位小数，红涨绿跌，详细口径集中在“数据说明”。</p>
+<p>投资数据独立传输并以事务合并投资表，导入 20 条规范记录、10 项持仓；合并前后逐表核对原平台数据一致，服务器 84 条作品保持完整，数据库 integrity_check 为 ok。部署前备份 <code>/data/platform-before-investment-20261105-224544.sqlite3</code>，保留镜像 <code>pixelle-studio-app:before-investment-20261105-224544</code>；发布镜像为 <code>pixelle-studio-app:investment-20261105-224544</code>。个人账本不进入源码或镜像。</p>
+<p>验证：149 项 Python 平台回归、48 项 Chromium/WebKit 浏览器回归及前端构建通过。公网 HTTPS 登录、匿名接口 401、10 项持仓、20 条记录、TWR 起点为 0%，以及两种浏览器的 1440px/390px 投资页、说明弹窗、创作与作品库均通过；容器 healthy。生产后台连续采样时间为 14:47:59 和 14:48:57 UTC，刷新错误为空。</p>
 <p>2026-11-05 模板存储调整：按用户最新要求，31 个内置模板直接从应用目录读取，31 张真实效果图约 390 KB，作为 Web 静态资源随镜像发布。风格选择列表、已选小图和默认大预览均直接加载真实效果图；没有固定模板渲染请求或定时刷新。个人文案或模板参数修改才生成个人预览，继续存 COS。原 COS 的内置模板副本不再参与当前运行，历史模板 ID 保持一致。</p>
 <p>2026-11-05 后续界面更新：风格改为自动真实预览，取消手动“预览效果”。450ms 防抖后自动渲染当前模板、标题、固定文案及模板参数；更新保留上一张画面，失败可重试。手机风格区显示缩略图并支持放大，桌面右侧实时更新。18 项浏览器测试、33 项平台测试及公网桌面/手机真实 COS 图片验收通过；应用容器 healthy，预览临时目录清空。</p>
 <p>当前 DeepSeek 账号在线文案请求返回 402 Insufficient Balance。主题生成文案需要充值，或在创作设置中切换可用 LLM；界面会显示余额不足提示。固定文案创作不受此限制，完整流程已验证。未对全部付费图片/视频模型逐一发起生成请求。</p>
 <p>Edge 免费配音从本服务器请求被上游拒绝（403），界面提示选择 MiniMax 或稍后重试。已配置 MiniMax 可正常生成；系统沿用用户现有 API 配音默认值，不自动替换模型凭据或扣费服务选择。</p>
 <p>证书于 2027-02-02 到期，需要提前替换证书并 reload NGINX。作品媒体存 COS；SQLite 设置及索引仍保存在持久卷，备份时用 SQLite backup API 并保护其中模型凭据。当前未配置定时数据库备份。</p>
+<h2 id="2026-11-05">微信访问恢复与安全加固（2026-11-05）<a class="headerlink" href="#2026-11-05" title="Permanent link">&para;</a></h2>
+<p>微信恢复访问流程要求网站根路径提供 TXT 所有权验证文件。服务器通过 NGINX 的精确 location 从 <code>/var/www/work.dazhao.fun-verification</code> 提供，文件不需要登录；应用发布不影响验证文件。当前 HTTPS 访问返回 200、text/plain，内容精确匹配微信给出的 40 个字符。验证令牌仅留在服务器，不加入源码。</p>
+<p>安全版本 <code>security-20261105-230719</code> 已上线。网页新增 CSP（脚本仅同源、禁止嵌入框架与插件）、X-Frame-Options 与 HSTS；上传确认增加图片格式与解码验证、限制图片像素，音频按指定格式以限时 ffprobe 检查。确认前下载限制大小，确认后的文件另存到客户端 PUT 链接无权覆盖的位置。模板参数按声明类型校验，渲染时统一转义非字符串值，拒绝颜色和数字参数中的 CSS 注入。</p>
+<p>167 项平台测试与前端构建通过，Chromium/WebKit 的线上桌面与手机投资页、登录、创作入口和作品库回归通过；保留 84 个作品及 20 笔投资记录。服务器发布目录包含先前源码、镜像标签 <code>pixelle-studio-app:before-security-20261105-230719</code>，数据库备份 <code>/data/platform-before-security-20261105-230719.sqlite3</code> 已检查完整性。微信是否恢复访问仍以其申请审核结果为准，现有证据不能确认拦截原因为上述防护缺口。</p>
 
 
 
@@ -1478,7 +1496,7 @@
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-datetime" title="November 5, 2026 13:14:45 UTC">November 5, 2026 13:14:45</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-datetime" title="November 5, 2026 15:13:14 UTC">November 5, 2026 15:13:14</span>
   </span>
 
     

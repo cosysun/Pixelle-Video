@@ -23,10 +23,8 @@ Services:
 - FrameProcessor: Frame processing orchestrator
 - PersistenceService: Task metadata and storyboard persistence
 - HistoryManager: History management business logic
-- ComfyBaseService: Base class for ComfyUI-based services
 """
 
-from pixelle_video.services.comfy_base_service import ComfyBaseService
 from pixelle_video.services.frame_processor import FrameProcessor
 from pixelle_video.services.history_manager import HistoryManager
 from pixelle_video.services.llm_service import LLMService
@@ -40,7 +38,6 @@ from pixelle_video.services.video import VideoService
 ImageService = MediaService
 
 __all__ = [
-    "ComfyBaseService",
     "LLMService",
     "TTSService",
     "MediaService",

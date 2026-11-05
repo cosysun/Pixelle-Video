@@ -15,13 +15,15 @@ Configuration schema with Pydantic models
 
 Single source of truth for all configuration defaults and validation.
 """
+
 from typing import Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 class LLMConfig(BaseModel):
     """LLM configuration"""
+
     api_key: str = Field(default="", description="LLM API Key")
     base_url: str = Field(default="", description="LLM API Base URL")
     model: str = Field(default="", description="LLM Model Name")
@@ -29,27 +31,37 @@ class LLMConfig(BaseModel):
 
 class APIProviderCommonConfig(BaseModel):
     """Common API provider settings"""
-    print_model_input: bool = Field(default=False, description="Print provider request parameters for debugging")
+
+    print_model_input: bool = Field(
+        default=False, description="Print provider request parameters for debugging"
+    )
     local_proxy: str = Field(default="", description="Local HTTP proxy for providers that need it")
 
 
 class APIKeyProviderConfig(BaseModel):
     """Provider settings with API key and optional base URL"""
+
     api_key: str = Field(default="", description="Provider API Key")
     base_url: str = Field(default="", description="Provider API Base URL")
-    use_proxy: bool = Field(default=False, description="Route provider requests through common local proxy")
+    use_proxy: bool = Field(
+        default=False, description="Route provider requests through common local proxy"
+    )
 
 
 class AccessSecretProviderConfig(BaseModel):
     """Provider settings with access key / secret key credentials"""
+
     base_url: str = Field(default="", description="Provider API Base URL")
     access_key: str = Field(default="", description="Provider Access Key")
     secret_key: str = Field(default="", description="Provider Secret Key")
-    use_proxy: bool = Field(default=False, description="Route provider requests through common local proxy")
+    use_proxy: bool = Field(
+        default=False, description="Route provider requests through common local proxy"
+    )
 
 
 class APIProvidersConfig(BaseModel):
     """Direct model provider API configuration"""
+
     common: APIProviderCommonConfig = Field(default_factory=APIProviderCommonConfig)
     openai: APIKeyProviderConfig = Field(default_factory=APIKeyProviderConfig)
     openrouter: APIKeyProviderConfig = Field(default_factory=APIKeyProviderConfig)
@@ -63,50 +75,48 @@ class APIProvidersConfig(BaseModel):
 
 class MiniMaxTTSProviderConfig(APIKeyProviderConfig):
     """MiniMax TTS provider settings"""
+
     base_url: str = Field(default="https://api.minimaxi.com", description="MiniMax API Base URL")
     default_model: str = Field(default="speech-2.8-turbo", description="Default MiniMax TTS model")
     default_voice_id: Optional[str] = Field(default=None, description="Default MiniMax voice_id")
-    default_voice_type: Optional[str] = Field(default=None, description="Default MiniMax voice type")
+    default_voice_type: Optional[str] = Field(
+        default=None, description="Default MiniMax voice type"
+    )
 
 
 class TTSModelProvidersConfig(BaseModel):
     """Third-party TTS model provider settings"""
+
     minimax: MiniMaxTTSProviderConfig = Field(default_factory=MiniMaxTTSProviderConfig)
 
 
 class TTSModelsConfig(BaseModel):
     """Third-party TTS model configuration"""
+
     default_provider: str = Field(default="minimax", description="Default third-party TTS provider")
-    default_model: str = Field(default="speech-2.8-turbo", description="Default third-party TTS model")
+    default_model: str = Field(
+        default="speech-2.8-turbo", description="Default third-party TTS model"
+    )
     providers: TTSModelProvidersConfig = Field(default_factory=TTSModelProvidersConfig)
 
 
 class TTSLocalConfig(BaseModel):
     """Local TTS configuration (Edge TTS)"""
+
     voice: str = Field(default="zh-CN-YunjianNeural", description="Edge TTS voice ID")
-    speed: float = Field(default=1.2, ge=0.5, le=2.0, description="Speech speed multiplier (0.5-2.0)")
-
-
-class TTSComfyUIConfig(BaseModel):
-    """ComfyUI TTS configuration"""
-    default_workflow: Optional[str] = Field(default=None, description="Default TTS workflow (optional)")
+    speed: float = Field(
+        default=1.2, ge=0.5, le=2.0, description="Speech speed multiplier (0.5-2.0)"
+    )
 
 
 class TTSSubConfig(BaseModel):
-    """TTS-specific configuration (under comfyui.tts)"""
-    inference_mode: str = Field(default="api", description="TTS inference mode: 'local', 'comfyui', or 'api'")
-    local: TTSLocalConfig = Field(default_factory=TTSLocalConfig, description="Local TTS (Edge TTS) configuration")
-    comfyui: TTSComfyUIConfig = Field(default_factory=TTSComfyUIConfig, description="ComfyUI TTS configuration")
-    
-    # Backward compatibility: keep default_workflow at top level
-    @property
-    def default_workflow(self) -> Optional[str]:
-        """Get default workflow (for backward compatibility)"""
-        return self.comfyui.default_workflow
+    inference_mode: str = Field(default="local", pattern="^(local|api)$")
+    local: TTSLocalConfig = Field(default_factory=TTSLocalConfig)
 
 
 class ImageSubConfig(BaseModel):
-    """Image-specific configuration (under comfyui.image)"""
+    """Image-specific configuration (direct API image defaults)"""
+
     default_workflow: Optional[str] = Field(
         default="api/dashscope/wan2.7-image",
         description="Default image workflow (optional)",
@@ -122,8 +132,11 @@ class ImageSubConfig(BaseModel):
 
 
 class VideoSubConfig(BaseModel):
-    """Video-specific configuration (under comfyui.video)"""
-    default_workflow: Optional[str] = Field(default=None, description="Default video workflow (optional)")
+    """Video-specific configuration (direct API video defaults)"""
+
+    default_workflow: Optional[str] = Field(
+        default=None, description="Default video workflow (optional)"
+    )
     prompt_prefix: str = Field(
         default=(
             "Minimalist black and white sketch style with muted watercolor accents, "
@@ -134,47 +147,75 @@ class VideoSubConfig(BaseModel):
     )
 
 
-class ComfyUIConfig(BaseModel):
-    """ComfyUI configuration (includes global settings and service-specific configs)"""
-    comfyui_url: str = Field(default="http://127.0.0.1:8188", description="ComfyUI Server URL")
-    comfyui_api_key: Optional[str] = Field(default=None, description="ComfyUI API Key (optional)")
-    runninghub_api_key: Optional[str] = Field(default=None, description="RunningHub API Key (optional)")
-    runninghub_concurrent_limit: int = Field(default=1, ge=1, le=10, description="RunningHub concurrent execution limit (1-10)")
-    runninghub_instance_type: Optional[str] = Field(default=None, description="RunningHub instance type (optional, set to 'plus' for 48GB VRAM)")
-    tts: TTSSubConfig = Field(default_factory=TTSSubConfig, description="TTS-specific configuration")
-    image: ImageSubConfig = Field(default_factory=ImageSubConfig, description="Image-specific configuration")
-    video: VideoSubConfig = Field(default_factory=VideoSubConfig, description="Video-specific configuration")
+class MediaConfig(BaseModel):
+    image: ImageSubConfig = Field(default_factory=ImageSubConfig)
+    video: VideoSubConfig = Field(default_factory=VideoSubConfig)
 
 
 class TemplateConfig(BaseModel):
     """Template configuration"""
+
     default_template: str = Field(
-        default="1080x1920/default.html",
-        description="Default frame template path"
+        default="1080x1920/image_default.html", description="Default frame template path"
     )
 
 
 class PixelleVideoConfig(BaseModel):
     """Pixelle-Video main configuration"""
+
     project_name: str = Field(default="Pixelle-Video", description="Project name")
     llm: LLMConfig = Field(default_factory=LLMConfig)
     api_providers: APIProvidersConfig = Field(default_factory=APIProvidersConfig)
     tts_models: TTSModelsConfig = Field(default_factory=TTSModelsConfig)
-    comfyui: ComfyUIConfig = Field(default_factory=ComfyUIConfig)
+    tts: TTSSubConfig = Field(default_factory=TTSSubConfig)
+    media: MediaConfig = Field(default_factory=MediaConfig)
     template: TemplateConfig = Field(default_factory=TemplateConfig)
-    
+
+    @model_validator(mode="before")
+    @classmethod
+    def migrate_legacy(cls, value):
+        if not isinstance(value, dict):
+            return value
+        value = dict(value)
+        legacy = value.pop("comfyui", {})
+        if legacy:
+            old_tts = legacy.get("tts", {})
+            value.setdefault(
+                "tts",
+                {
+                    "inference_mode": old_tts.get("inference_mode")
+                    if old_tts.get("inference_mode") in {"local", "api"}
+                    else "local",
+                    "local": old_tts.get("local", {}),
+                },
+            )
+            value.setdefault(
+                "media", {"image": legacy.get("image", {}), "video": legacy.get("video", {})}
+            )
+        for section in (value.get("media") or {}).values():
+            if (
+                isinstance(section, dict)
+                and section.get("default_workflow")
+                and not section["default_workflow"].startswith("api/")
+            ):
+                section["default_workflow"] = None
+        return value
+
     def is_llm_configured(self) -> bool:
         """Check if LLM is properly configured"""
         return bool(
-            self.llm.api_key and self.llm.api_key.strip() and
-            self.llm.base_url and self.llm.base_url.strip() and
-            self.llm.model and self.llm.model.strip()
+            self.llm.api_key
+            and self.llm.api_key.strip()
+            and self.llm.base_url
+            and self.llm.base_url.strip()
+            and self.llm.model
+            and self.llm.model.strip()
         )
-    
+
     def validate_required(self) -> bool:
         """Validate required configuration"""
         return self.is_llm_configured()
-    
+
     def to_dict(self) -> dict:
         """Convert to dictionary (for backward compatibility)"""
         return self.model_dump()

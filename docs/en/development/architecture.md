@@ -1,54 +1,5 @@
 # Architecture
 
-Technical architecture overview of Pixelle-Video.
+Pixelle Studio now uses React, FastAPI, SQLite and private Tencent COS. Legacy workflow services and pages have been retired.
 
----
-
-## Core Architecture
-
-Pixelle-Video uses a layered architecture design:
-
-- **Web Layer**: Streamlit Web interface
-- **Service Layer**: Core business logic
-- **ComfyUI Layer**: Image and TTS generation
-
----
-
-## Main Components
-
-### PixelleVideoCore
-
-Core service class coordinating all sub-services.
-
-### LLM Service
-
-Responsible for calling large language models to generate scripts.
-
-### Image Service
-
-Responsible for calling ComfyUI to generate images.
-
-### TTS Service
-
-Responsible for calling ComfyUI to generate speech.
-
-### Video Generator
-
-Responsible for composing the final video.
-
----
-
-## Tech Stack
-
-- **Backend**: Python 3.10+, AsyncIO
-- **Web**: Streamlit
-- **AI**: OpenAI API, ComfyUI
-- **Configuration**: YAML
-- **Tools**: uv (package management)
-
----
-
-## More Information
-
-Detailed architecture documentation coming soon.
-
+See the repository's current `docs/deployment.md` and `docs/architecture.md` for setup, history migration and independent content modules. Quick creation and full storyboard editing remain available on desktop and mobile web.

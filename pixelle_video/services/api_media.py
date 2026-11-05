@@ -54,12 +54,8 @@ class APIProviderMediaService:
     VIDEO_MODELS = {
         "dashscope": [
             "wan2.7-i2v",
-            "wan2.7-r2v",
-            "wan2.7-videoedit",
             "wan2.6-i2v-flash",
             "happyhorse-1.0-i2v",
-            "happyhorse-1.0-r2v",
-            "happyhorse-1.0-video-edit",
         ],
         "kling": [
             "kling-v3",
@@ -98,54 +94,8 @@ class APIProviderMediaService:
                 "https://help.aliyun.com/zh/model-studio/image-to-video-general-api-reference",
             ],
             "contract_issues": [
-                "Pixelle UI exposes first-frame image-to-video; asset-based workflow can optionally pass narration audio as driving_audio.",
+                "Quick creation supports first-frame image-to-video and optional narration driving audio.",
                 "last_frame and first_clip are supported by the adapter for continuation, not character replacement.",
-            ],
-        },
-        ("dashscope", "wan2.7-videoedit"): {
-            "ability_type": "video_editing",
-            "ability_types": ["video_editing", "action_transfer", "instruction_editing", "video_transfer"],
-            "adapter_ability_types": ["action_transfer", "video_editing"],
-            "input_modalities": ["text", "image", "video"],
-            "adapter_input_modalities": ["text", "image", "video"],
-            "duration": {"min": 2, "max": 10, "integer": True, "verified": True},
-            "resolutions": ["720P", "1080P"],
-            "ratios": ["16:9", "9:16", "1:1", "4:3", "3:4"],
-            "fps": 30,
-            "format": "mp4",
-            "api_contract_verified": True,
-            "source_urls": [
-                "https://help.aliyun.com/zh/model-studio/wan-video-editing-api-reference",
-                "https://help.aliyun.com/zh/model-studio/video-generate-edit-model/",
-            ],
-            "contract_issues": [
-                "Action transfer is mapped to video plus reference_image media, following the DashScope video-edit API contract.",
-            ],
-        },
-        ("dashscope", "wan2.7-r2v"): {
-            "ability_type": "reference_to_video",
-            "ability_types": [
-                "reference_to_video",
-                "digital_human",
-                "multi_character",
-                "native_audio",
-                "voice_reference",
-                "multi_shot",
-            ],
-            "adapter_ability_types": ["reference_to_video", "digital_human", "voice_reference"],
-            "input_modalities": ["text", "image", "audio", "video"],
-            "adapter_input_modalities": ["text", "image", "audio"],
-            "duration": {"min": 2, "max": 10, "integer": True, "verified": True},
-            "resolutions": ["720P", "1080P"],
-            "ratios": ["16:9", "9:16", "1:1", "4:3", "3:4"],
-            "fps": 30,
-            "format": "mp4",
-            "api_contract_verified": True,
-            "source_urls": [
-                "https://www.alibabacloud.com/help/doc-detail/3001146.html",
-            ],
-            "contract_issues": [
-                "Digital human uses reference_image media and optionally attaches a TTS audio file as reference_voice for the first character.",
             ],
         },
         ("dashscope", "wan2.6-i2v-flash"): {
@@ -183,50 +133,6 @@ class APIProviderMediaService:
                 "https://help.aliyun.com/zh/model-studio/video-generate-edit-model/",
             ],
             "contract_issues": [],
-        },
-        ("dashscope", "happyhorse-1.0-video-edit"): {
-            "ability_type": "video_editing",
-            "ability_types": ["video_editing", "action_transfer", "instruction_editing", "native_audio"],
-            "adapter_ability_types": ["action_transfer", "video_editing"],
-            "input_modalities": ["text", "image", "video"],
-            "adapter_input_modalities": ["text", "image", "video"],
-            "duration": {"min": 3, "max": 15, "integer": True, "verified": True},
-            "resolutions": ["720P", "1080P"],
-            "fps": 24,
-            "format": "mp4",
-            "api_contract_verified": True,
-            "source_urls": [
-                "https://help.aliyun.com/zh/model-studio/video-generate-edit-model/",
-                "https://help.aliyun.com/zh/model-studio/wan-video-editing-api-reference",
-            ],
-            "contract_issues": [
-                "Model capability is documented in the model list; adapter uses the same video + reference_image media contract as DashScope video-edit models.",
-            ],
-        },
-        ("dashscope", "happyhorse-1.0-r2v"): {
-            "ability_type": "reference_to_video",
-            "ability_types": [
-                "reference_to_video",
-                "digital_human",
-                "multi_character",
-                "native_audio",
-                "multi_shot",
-            ],
-            "adapter_ability_types": ["reference_to_video", "digital_human"],
-            "input_modalities": ["text", "image"],
-            "adapter_input_modalities": ["text", "image"],
-            "duration": {"min": 3, "max": 15, "integer": True, "verified": True},
-            "resolutions": ["720P", "1080P"],
-            "ratios": ["16:9", "9:16", "3:4", "4:3", "1:1"],
-            "fps": 24,
-            "format": "mp4",
-            "api_contract_verified": True,
-            "source_urls": [
-                "https://www.alibabacloud.com/help/doc-detail/3030778.html",
-            ],
-            "contract_issues": [
-                "HappyHorse reference-to-video supports reference_image media. The public contract does not expose reference_voice in this API.",
-            ],
         },
         ("kling", "kling-v3"): {
             "ability_type": "image_to_video",
@@ -341,7 +247,7 @@ class APIProviderMediaService:
         self.core = core
 
     def list_workflows(self) -> list[dict]:
-        """Return API models in the same shape as Comfy workflow metadata."""
+        """Return API models in the registered direct-provider metadata."""
         workflows = []
 
         for provider, models in self.IMAGE_MODELS.items():
@@ -483,14 +389,10 @@ class APIProviderMediaService:
     ) -> MediaResult:
 
         first_clip_path = params.get("first_clip_path") or params.get("first_video_path")
-        reference_image_path = params.get("reference_image_path")
-        reference_image_paths = params.get("reference_image_paths") or []
-        reference_video_paths = params.get("reference_video_paths") or []
-        has_reference_inputs = bool(reference_image_path or reference_image_paths or reference_video_paths)
-        if not image_path and not first_clip_path and not has_reference_inputs:
+        if not image_path and not first_clip_path:
             raise ValueError(
-                "API video models require image_path, first_clip_path, or reference media inputs. "
-                "Use an image template first or pass input image/video/reference media when calling media generation."
+                "API video models require image_path or first_clip_path. "
+                "Use an image template first or pass an input image/video when calling media generation."
             )
         if first_clip_path and not image_path and provider != "dashscope":
             raise ValueError(f"first_clip_path is only supported for DashScope wan2.7 models, not provider={provider}.")
@@ -756,10 +658,6 @@ class APIProviderMediaService:
                 {
                     "last_image_path": params.get("last_image_path") or params.get("last_frame_path"),
                     "first_clip_path": params.get("first_clip_path") or params.get("first_video_path"),
-                    "reference_image_path": params.get("reference_image_path"),
-                    "reference_image_paths": params.get("reference_image_paths"),
-                    "reference_video_paths": params.get("reference_video_paths"),
-                    "reference_audio_path": params.get("reference_audio_path") or params.get("reference_voice_path"),
                     "audio": params.get("audio"),
                     "audio_path": params.get("audio_path") or params.get("driving_audio_path"),
                     "prompt_extend": params.get("prompt_extend"),

@@ -284,37 +284,3 @@ class HunyuanImageClient:
         except Exception as e:
             logging.error(f"Failed to download Hunyuan image from {url}: {e}")
             return None
-
-
-if __name__ == "__main__":
-    import sys
-
-    sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
-    api_key = Config.HUNYUAN_API_KEY
-    if not api_key:
-        print("HUNYUAN_API_KEY 未设置，跳过")
-        sys.exit(1)
-
-    save_dir = "code/result/image/test_avail"
-    os.makedirs(save_dir, exist_ok=True)
-    client = HunyuanImageClient(api_key=api_key, local_proxy=Config.LOCAL_PROXY or None)
-
-    prompt = "雨中, 竹林, 小路, 水墨风格"
-
-    print(f"[测试1: HY-Image 3.0] {prompt}")
-    t0 = time.time()
-    try:
-        client.max_attempts = 30
-        paths = client.generate_image(prompt=prompt, model="hy-image-v3.0", save_dir=save_dir)
-        print(f"✓ 生成 {len(paths)} 张 ({time.time() - t0:.1f}s): {paths}")
-    except Exception as e:
-        print(f"✗ 失败 ({time.time() - t0:.1f}s): {e}")
-
-    print(f"\n[测试2: HY-Image Lite] {prompt}")
-    t0 = time.time()
-    try:
-        paths = client.generate_image(prompt=prompt, model="hy-image-lite", save_dir=save_dir)
-        print(f"✓ 生成 {len(paths)} 张 ({time.time() - t0:.1f}s): {paths}")
-    except Exception as e:
-        print(f"✗ 失败 ({time.time() - t0:.1f}s): {e}")

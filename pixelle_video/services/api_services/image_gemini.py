@@ -203,34 +203,3 @@ class GeminiImageClient:
         raise RuntimeError(
             f"Gemini image generation failed after {self.max_attempts} attempts: {last_error}"
         ) from last_error
-
-
-if __name__ == "__main__":
-    import sys
-
-    sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
-    api_key = Config.GEMINI_API_KEY
-    if not api_key:
-        print("GEMINI_API_KEY not set, skipping")
-        sys.exit(1)
-
-    save_dir = "code/result/image/test_avail"
-    os.makedirs(save_dir, exist_ok=True)
-    client = GeminiImageClient(api_key=api_key, local_proxy=Config.LOCAL_PROXY or None)
-    client.max_attempts = 1
-
-    prompt = "A cute orange cat lying on a sunny windowsill, watercolor style"
-    print(f"Testing gemini-3.1-flash-image: {prompt[:60]}...")
-    t0 = time.time()
-    try:
-        path = client.generate_image(
-            prompt=prompt,
-            model="gemini-3.1-flash-image",
-            save_dir=save_dir,
-            aspect_ratio="16:9",
-            resolution="1080P",
-        )
-        print(f"Success ({time.time() - t0:.1f}s): {path}")
-    except Exception as exc:
-        print(f"Failed ({time.time() - t0:.1f}s): {exc}")

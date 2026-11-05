@@ -14,8 +14,7 @@
 Retry helper for transient failures in pipeline steps.
 
 Many TTS / media-generation calls fail with transient errors that succeed on
-retry: ComfyUI workflow returning no audio, network timeouts, RunningHub queue
-hiccups, etc. ``with_retry`` wraps a single async call with bounded retries so
+retry: network timeouts, temporary provider failures, etc. ``with_retry`` wraps a single async call with bounded retries so
 the pipeline doesn't have to surface those to the user.
 
 Permanent errors (auth, validation, missing files) are NOT retried — they fall
@@ -118,7 +117,7 @@ def is_transient_error(exc: BaseException) -> bool:
     }:
         return True
 
-    # Message-based fallback for generic Exceptions raised by ComfyKit /
+    # Message-based fallback for generic Exceptions raised by direct API
     # provider clients with informative strings.
     msg = str(exc).lower()
     return any(needle in msg for needle in _TRANSIENT_MESSAGE_SUBSTRINGS)

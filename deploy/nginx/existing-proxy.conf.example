@@ -1,0 +1,13 @@
+# 将此 location 放入现有 NGINX 的 HTTPS server 块，保留现有证书配置。
+# 替换为应用服务器的内网 IP 和 PIXELLE_PORT；同机宿主 NGINX 可用 127.0.0.1。
+# 前端页面和 API 一起转发，使用域名根路径访问应用。
+location / {
+    proxy_pass http://10.0.0.20:8000;
+    proxy_set_header Host $http_host;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    # 适用于 NGINX 直接接收浏览器请求；前面还有网关时沿用现有可信 real_ip 配置。
+    proxy_set_header X-Forwarded-For $remote_addr;
+    proxy_http_version 1.1;
+    proxy_connect_timeout 10s;
+    proxy_read_timeout 120s;
+}

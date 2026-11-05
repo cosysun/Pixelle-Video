@@ -200,6 +200,8 @@ class LLMService:
         
         except Exception as e:
             logger.error(f"LLM call error (model={final_model}, base_url={client.base_url}): {e}")
+            if getattr(e, "status_code", None) == 402:
+                raise ValueError("文案模型账户余额不足，请充值或在创作设置中切换 LLM") from e
             raise
     
     async def _call_with_structured_output(

@@ -24,6 +24,20 @@ from pathlib import Path
 from typing import Optional, Tuple, Literal
 
 
+from contextvars import ContextVar
+from contextlib import contextmanager
+
+_workspace = ContextVar("pixelle_workspace", default=None)
+
+@contextmanager
+def temporary_workspace(path):
+    token = _workspace.set(str(path))
+    try:
+        yield
+    finally:
+        _workspace.reset(token)
+
+
 def get_pixelle_video_root_path() -> str:
     """
     Get Pixelle-Video root path
@@ -53,8 +67,7 @@ def ensure_pixelle_video_root_path() -> str:
     """
     root_path = get_pixelle_video_root_path()
     root_path_obj = Path(root_path)
-    output_dir = root_path_obj / 'output'
-    output_dir.mkdir(parents=True, exist_ok=True)
+    # Project roots are read-only resources; outputs belong to a task workspace.
     
     return root_path
 
@@ -95,7 +108,7 @@ def get_temp_path(*paths: str) -> str:
         get_temp_path("audio.mp3")
         # Returns: "/path/to/project/temp/audio.mp3"
     """
-    temp_path = get_root_path("temp")
+    temp_path = os.path.join(_workspace.get() or __import__("tempfile").gettempdir() + "/pixelle", "temp")
     
     # Ensure temp directory exists
     os.makedirs(temp_path, exist_ok=True)
@@ -147,7 +160,7 @@ def get_output_path(*paths: str) -> str:
         get_output_path("video.mp4")
         # Returns: "/path/to/project/output/video.mp4"
     """
-    output_path = get_root_path("output")
+    output_path = os.path.join(_workspace.get() or __import__("tempfile").gettempdir() + "/pixelle", "output")
 
     # Ensure output directory exists
     os.makedirs(output_path, exist_ok=True)
@@ -212,7 +225,7 @@ def create_task_id() -> str:
         Task ID string
     """
     timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-    random_suffix = f"{random.randint(0, 0xFFFF):04x}"  # 4-digit hex (0000-ffff)
+    random_suffix = __import__('uuid').uuid4().hex[:12]  # 4-digit hex (0000-ffff)
     return f"{timestamp}_{random_suffix}"
 
 
@@ -325,9 +338,9 @@ def get_task_final_video_path(task_id: str) -> str:
     return get_task_path(task_id, "final.mp4")
 
 
-# ========== Resource Management (Templates/BGM/Workflows) ==========
+# ========== Resource Management (Templates/BGM) ==========
 
-def get_resource_path(resource_type: Literal["bgm", "templates", "workflows"], *paths: str) -> str:
+def get_resource_path(resource_type: Literal["bgm", "templates"], *paths: str) -> str:
     """
     Get resource file path with custom override support
     
@@ -336,7 +349,7 @@ def get_resource_path(resource_type: Literal["bgm", "templates", "workflows"], *
         2. {resource_type}/*paths       (default, fallback)
     
     Args:
-        resource_type: Resource type ("bgm", "templates", "workflows")
+        resource_type: Resource type ("bgm", "templates")
         *paths: Path components relative to resource directory
     
     Returns:
@@ -352,8 +365,6 @@ def get_resource_path(resource_type: Literal["bgm", "templates", "workflows"], *
         >>> get_resource_path("templates", "1080x1920", "default.html")
         # Returns: "data/templates/1080x1920/default.html" or "templates/1080x1920/default.html"
         
-        >>> get_resource_path("workflows", "selfhost", "image_flux.json")
-        # Returns: "data/workflows/selfhost/image_flux.json" or "workflows/selfhost/image_flux.json"
     """
     # Build custom path (data/*)
     custom_path = get_data_path(resource_type, *paths)
@@ -378,7 +389,7 @@ def get_resource_path(resource_type: Literal["bgm", "templates", "workflows"], *
 
 
 def list_resource_files(
-    resource_type: Literal["bgm", "templates", "workflows"],
+    resource_type: Literal["bgm", "templates"],
     subdir: str = ""
 ) -> list[str]:
     """
@@ -390,7 +401,7 @@ def list_resource_files(
         - Duplicate names are deduplicated (custom takes precedence)
     
     Args:
-        resource_type: Resource type ("bgm", "templates", "workflows")
+        resource_type: Resource type ("bgm", "templates")
         subdir: Optional subdirectory (e.g., "1080x1920" for templates)
     
     Returns:
@@ -427,7 +438,7 @@ def list_resource_files(
 
 
 def list_resource_dirs(
-    resource_type: Literal["bgm", "templates", "workflows"]
+    resource_type: Literal["bgm", "templates"]
 ) -> list[str]:
     """
     List subdirectories in resource directory
@@ -435,7 +446,7 @@ def list_resource_dirs(
     Merges directories from both default and custom locations.
     
     Args:
-        resource_type: Resource type ("bgm", "templates", "workflows")
+        resource_type: Resource type ("bgm", "templates")
     
     Returns:
         Sorted list of directory names (deduplicated)
@@ -444,8 +455,6 @@ def list_resource_dirs(
         >>> list_resource_dirs("templates")
         # Returns: ["1080x1080", "1080x1920", "1920x1080"]
         
-        >>> list_resource_dirs("workflows")
-        # Returns: ["runninghub", "selfhost"]
     """
     dirs = set()
     
@@ -468,12 +477,12 @@ def list_resource_dirs(
     return sorted(dirs)
 
 
-def resource_exists(resource_type: Literal["bgm", "templates", "workflows"], *paths: str) -> bool:
+def resource_exists(resource_type: Literal["bgm", "templates"], *paths: str) -> bool:
     """
     Check if resource file exists (in custom or default location)
     
     Args:
-        resource_type: Resource type ("bgm", "templates", "workflows")
+        resource_type: Resource type ("bgm", "templates")
         *paths: Path components relative to resource directory
     
     Returns:

@@ -20,17 +20,18 @@ process orchestration.
 
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Optional, List, Dict, Any, Callable
+from typing import Any, Callable, Dict, List, Optional
+
 from loguru import logger
 
-from pixelle_video.pipelines.base import BasePipeline
+from pixelle_video.models.progress import ProgressEvent
 from pixelle_video.models.storyboard import (
     Storyboard,
+    StoryboardConfig,
     StoryboardFrame,
     VideoGenerationResult,
-    StoryboardConfig
 )
-from pixelle_video.models.progress import ProgressEvent
+from pixelle_video.pipelines.base import BasePipeline
 
 
 @dataclass
@@ -40,6 +41,7 @@ class PipelineContext:
 
     This object is passed between steps in the LinearVideoPipeline lifecycle.
     """
+
     # === Input ===
     input_text: str
     params: Dict[str, Any]
@@ -77,7 +79,7 @@ class PipelineContext:
 class LinearVideoPipeline(BasePipeline):
     """
     Base class for linear video generation pipelines using the Template Method pattern.
-    
+
     This class orchestrates the video generation process into distinct lifecycle steps:
     1. setup_environment
     2. generate_content
@@ -87,16 +89,16 @@ class LinearVideoPipeline(BasePipeline):
     6. produce_assets
     7. post_production
     8. finalize
-    
+
     Subclasses should override specific steps to customize behavior while maintaining
     the overall workflow structure.
     """
-    
+
     async def __call__(
         self,
         text: str,
         progress_callback: Optional[Callable[[ProgressEvent], None]] = None,
-        **kwargs
+        **kwargs,
     ) -> VideoGenerationResult:
         """
         Execute the pipeline using the template method.
@@ -171,7 +173,7 @@ class LinearVideoPipeline(BasePipeline):
             raise
 
     # ==================== Lifecycle Methods ====================
-    
+
     async def setup_environment(self, ctx: PipelineContext):
         """Step 1: Setup task directory and environment."""
         pass
@@ -194,15 +196,15 @@ class LinearVideoPipeline(BasePipeline):
     async def generate_content(self, ctx: PipelineContext):
         """Step 2: Generate or process script/narrations."""
         pass
-        
+
     async def determine_title(self, ctx: PipelineContext):
         """Step 3: Determine or generate video title."""
         pass
-        
+
     async def plan_visuals(self, ctx: PipelineContext):
         """Step 4: Generate image prompts or visual descriptions."""
         pass
-        
+
     async def initialize_storyboard(self, ctx: PipelineContext):
         """Step 5: Create Storyboard object and frames."""
         pass
@@ -244,7 +246,7 @@ class LinearVideoPipeline(BasePipeline):
                 continue
 
             # Parent: reuse the original frame object so any other state
-            # (image_path already set by an asset-based pipeline, etc.) is
+            # (restored media and editing state, for example) is
             # preserved. Just shorten its narration to the first chunk.
             parent_new_index = len(new_frames)
             frame.narration = chunks[0]
@@ -279,18 +281,20 @@ class LinearVideoPipeline(BasePipeline):
     async def produce_assets(self, ctx: PipelineContext):
         """Step 6: Generate audio, images, and render frames (Core processing)."""
         pass
-        
+
     async def post_production(self, ctx: PipelineContext):
         """Step 7: Concatenate videos and add BGM."""
         pass
-        
+
     async def finalize(self, ctx: PipelineContext) -> VideoGenerationResult:
         """Step 8: Create result object and persist metadata."""
         raise NotImplementedError("finalize must be implemented by subclass")
 
     async def handle_exception(self, ctx: PipelineContext, error: Exception):
         """Handle exceptions during pipeline execution."""
-        logger.error(f"Pipeline execution failed: {error}")
+        from pixelle_video.platform.security import safe_error
+
+        logger.error("Pipeline execution failed: {}", safe_error(error))
 
     # ==================== Persistence Helpers ====================
     #
@@ -320,8 +324,7 @@ class LinearVideoPipeline(BasePipeline):
                 return False
 
         safe_params = {
-            k: v for k, v in (ctx.params or {}).items()
-            if _is_jsonable(v) and not callable(v)
+            k: v for k, v in (ctx.params or {}).items() if _is_jsonable(v) and not callable(v)
         }
         safe_params["text"] = ctx.input_text
         # source_page is set by the UI wrapper so the History page's Resume
@@ -374,11 +377,7 @@ class LinearVideoPipeline(BasePipeline):
             }
             await self.core.persistence.save_task_metadata(ctx.task_id, metadata)
         except Exception as e:  # noqa: BLE001
-            logger.warning(
-                f"Could not persist initial metadata for {ctx.task_id}: {e} "
-                f"(continuing — task will still run, but won't show up on the "
-                f"History page until finalize)"
-            )
+            raise RuntimeError("无法保存任务初始状态，请检查 COS 后重试") from e
 
     async def _persist_failure(self, ctx: PipelineContext, error: Exception):
         """
@@ -400,6 +399,6 @@ class LinearVideoPipeline(BasePipeline):
 
         await self.core.persistence.update_task_status(
             ctx.task_id,
-            "failed",
+            "cancelled" if type(error).__name__ == "JobCancelled" else "failed",
             error=str(error),
         )

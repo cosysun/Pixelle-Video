@@ -33,43 +33,45 @@ from pixelle_video.utils.retry import with_retry
 
 class FrameProcessor:
     """Frame processor"""
-    
+
     def __init__(self, pixelle_video_core):
         """
         Initialize
-        
+
         Args:
             pixelle_video_core: PixelleVideoCore instance
         """
         self.core = pixelle_video_core
-    
+
     async def __call__(
         self,
         frame: StoryboardFrame,
-        storyboard: 'Storyboard',
+        storyboard: "Storyboard",
         config: StoryboardConfig,
         total_frames: int = 1,
-        progress_callback: Optional[Callable[[ProgressEvent], None]] = None
+        progress_callback: Optional[Callable[[ProgressEvent], None]] = None,
     ) -> StoryboardFrame:
         """
         Process single frame through complete pipeline
-        
+
         Steps:
         1. Generate audio (TTS)
-        2. Generate image (ComfyKit)
+        2. Generate image (direct API)
         3. Compose frame (add subtitle)
         4. Create video segment (image + audio)
-        
+
         Args:
             frame: Storyboard frame to process
             storyboard: Storyboard instance
             config: Storyboard configuration
             total_frames: Total number of frames in storyboard
             progress_callback: Optional callback for progress updates (receives ProgressEvent)
-            
+
         Returns:
             Processed frame with all paths filled
         """
+        if hasattr(self.core, "cancel_check"):
+            self.core.cancel_check()
         logger.info(f"Processing frame {frame.index}...")
 
         frame_num = frame.index + 1
@@ -84,21 +86,28 @@ class FrameProcessor:
                 f"(segment exists at {frame.video_segment_path}), skipping"
             )
             if progress_callback:
-                progress_callback(ProgressEvent(
-                    event_type="frame_step",
-                    progress=1.0,
-                    frame_current=frame_num,
-                    frame_total=total_frames,
-                    step=4,
-                    action="skip",
-                ))
+                progress_callback(
+                    ProgressEvent(
+                        event_type="frame_step",
+                        progress=1.0,
+                        frame_current=frame_num,
+                        frame_total=total_frames,
+                        step=4,
+                        action="skip",
+                    )
+                )
             return frame
 
         # Resolve subtitle-chunk reference: child frames share their parent's
         # image instead of regenerating it. The parent must already have been
         # processed (image_path or video_path populated) - otherwise frame
         # ordering was broken upstream and we fail loudly.
-        if frame.image_source_index is not None:
+        from pathlib import Path
+
+        from pixelle_video.utils.template_util import get_template_type
+
+        template_kind = get_template_type(Path(config.frame_template).name)
+        if frame.image_source_index is not None and template_kind != "static":
             try:
                 src = storyboard.frames[frame.image_source_index]
             except IndexError:
@@ -126,8 +135,8 @@ class FrameProcessor:
             )
 
         # Determine if this frame needs image generation
-        # If image_path or video_path is already set (e.g. asset-based pipeline,
-        # subtitle-chunk reuse above, OR a previous run that we're now
+        # If image_path or video_path is already set (e.g. subtitle-chunk
+        # reuse above, OR a previous run that we're now
         # resuming), we consider it "has existing media" and skip generation
         # even if image_prompt is set. This is what makes resume cheap for
         # frames that failed AFTER media generation.
@@ -136,34 +145,36 @@ class FrameProcessor:
 
         try:
             # Step 1: Generate audio (TTS)
-            # Skip if audio_path is set (asset-based, ref-audio, OR resumed).
-            # Existing behavior: path-based check is sufficient since we only
-            # set audio_path in two places (here, and asset_based init).
+            # Reuse audio restored from a previous run or storyboard edit.
             if not frame.audio_path:
                 if progress_callback:
-                    progress_callback(ProgressEvent(
-                        event_type="frame_step",
-                        progress=0.0,
-                        frame_current=frame_num,
-                        frame_total=total_frames,
-                        step=1,
-                        action="audio"
-                    ))
+                    progress_callback(
+                        ProgressEvent(
+                            event_type="frame_step",
+                            progress=0.0,
+                            frame_current=frame_num,
+                            frame_total=total_frames,
+                            step=1,
+                            action="audio",
+                        )
+                    )
                 await self._step_generate_audio(frame, config)
             else:
                 logger.debug(f"  1/4: Using existing audio: {frame.audio_path}")
-            
+
             # Step 2: Generate media (image or video, conditional)
             if needs_generation:
                 if progress_callback:
-                    progress_callback(ProgressEvent(
-                        event_type="frame_step",
-                        progress=0.25,
-                        frame_current=frame_num,
-                        frame_total=total_frames,
-                        step=2,
-                        action="media"
-                    ))
+                    progress_callback(
+                        ProgressEvent(
+                            event_type="frame_step",
+                            progress=0.25,
+                            frame_current=frame_num,
+                            frame_total=total_frames,
+                            step=2,
+                            action="media",
+                        )
+                    )
                 await self._step_generate_media(frame, config)
             elif has_existing_media:
                 # Log appropriate message based on media type
@@ -175,44 +186,44 @@ class FrameProcessor:
                 frame.image_path = None
                 frame.media_type = None
                 logger.debug("  2/4: Skipped media generation (not required by template)")
-        
+
             # Step 3: Compose frame (add subtitle)
             if progress_callback:
-                progress_callback(ProgressEvent(
-                    event_type="frame_step",
-                    progress=0.50 if (needs_generation or has_existing_media) else 0.33,
-                    frame_current=frame_num,
-                    frame_total=total_frames,
-                    step=3,
-                    action="compose"
-                ))
+                progress_callback(
+                    ProgressEvent(
+                        event_type="frame_step",
+                        progress=0.50 if (needs_generation or has_existing_media) else 0.33,
+                        frame_current=frame_num,
+                        frame_total=total_frames,
+                        step=3,
+                        action="compose",
+                    )
+                )
             await self._step_compose_frame(frame, storyboard, config)
-            
+
             # Step 4: Create video segment
             if progress_callback:
-                progress_callback(ProgressEvent(
-                    event_type="frame_step",
-                    progress=0.75 if (needs_generation or has_existing_media) else 0.67,
-                    frame_current=frame_num,
-                    frame_total=total_frames,
-                    step=4,
-                    action="video"
-                ))
-            
+                progress_callback(
+                    ProgressEvent(
+                        event_type="frame_step",
+                        progress=0.75 if (needs_generation or has_existing_media) else 0.67,
+                        frame_current=frame_num,
+                        frame_total=total_frames,
+                        step=4,
+                        action="video",
+                    )
+                )
+
             await self._step_create_video_segment(frame, config)
-            
+
             logger.info(f"✅ Frame {frame.index} completed")
             return frame
 
         except Exception as e:
             logger.error(f"❌ Failed to process frame {frame.index}: {e}")
             raise
-    
-    async def _step_generate_audio(
-        self,
-        frame: StoryboardFrame,
-        config: StoryboardConfig
-    ):
+
+    async def _step_generate_audio(self, frame: StoryboardFrame, config: StoryboardConfig):
         """Step 1: Generate audio using TTS"""
         logger.debug(f"  1/4: Generating audio for frame {frame.index}...")
         narration_text = (frame.narration or "").strip()
@@ -221,11 +232,12 @@ class FrameProcessor:
                 f"Frame {frame.index + 1} narration is empty; "
                 "please edit the narration before regenerating audio/video."
             )
-        
+
         # Generate output path using task_id
         from pixelle_video.utils.os_util import get_task_frame_path
+
         output_path = get_task_frame_path(config.task_id, frame.index, "audio")
-        
+
         # Build TTS params based on inference mode
         tts_params = {
             "text": narration_text,
@@ -233,7 +245,7 @@ class FrameProcessor:
             "output_path": output_path,
             "index": frame.index + 1,  # 1-based index for workflow
         }
-        
+
         if config.tts_inference_mode == "local":
             # Local mode: pass voice and speed
             if config.voice_id:
@@ -252,50 +264,38 @@ class FrameProcessor:
                 tts_params["speed"] = config.tts_speed
             if config.tts_volume is not None:
                 tts_params["volume"] = config.tts_volume
-        else:  # comfyui
-            # ComfyUI mode: pass workflow, voice, speed, and ref_audio
-            if config.tts_workflow:
-                tts_params["workflow"] = config.tts_workflow
-            if config.voice_id:
-                tts_params["voice"] = config.voice_id
-            if config.tts_speed is not None:
-                tts_params["speed"] = config.tts_speed
-            if config.ref_audio:
-                tts_params["ref_audio"] = config.ref_audio
-        
+        else:
+            raise ValueError("请选择受支持的配音服务")
+
         audio_path = await with_retry(
             lambda: self.core.tts(**tts_params),
             label=f"tts(frame={frame.index})",
         )
 
         frame.audio_path = audio_path
-        
+
         # Get audio duration
         frame.duration = await self._get_audio_duration(audio_path)
-        
+
         logger.debug(f"  ✓ Audio generated: {audio_path} ({frame.duration:.2f}s)")
-    
-    async def _step_generate_media(
-        self,
-        frame: StoryboardFrame,
-        config: StoryboardConfig
-    ):
-        """Step 2: Generate media (image or video) using ComfyKit"""
+
+    async def _step_generate_media(self, frame: StoryboardFrame, config: StoryboardConfig):
+        """Step 2: Generate media (image or video) using direct API"""
         logger.debug(f"  2/4: Generating media for frame {frame.index}...")
-        
-        # Determine media type based on workflow/template.
-        # video_ prefix in workflow name indicates ComfyUI video generation;
-        # video_* templates can also use direct API video workflows.
+
+        # Determine media type from the direct API model identifier or template.
         workflow_name = config.media_workflow or ""
         from pixelle_video.utils.template_util import get_template_type
+
         template_type = get_template_type(config.frame_template or "")
         is_video_workflow = "video_" in workflow_name.lower() or template_type == "video"
         media_type = "video" if is_video_workflow else "image"
-        
+
         logger.debug(f"  → Media type: {media_type} (workflow: {workflow_name})")
-        
+
         # Build media generation parameters
         from pixelle_video.utils.os_util import get_task_frame_path
+
         output_path = get_task_frame_path(config.task_id, frame.index, media_type)
         api_video_params = dict(config.api_video_params or {}) if media_type == "video" else {}
         if media_type == "video" and workflow_name.startswith("api/"):
@@ -312,43 +312,39 @@ class FrameProcessor:
             "index": frame.index + 1,  # 1-based index for workflow
         }
         media_params.update(api_video_params)
-        
+
         # For video workflows: pass audio duration as target video duration
         # This ensures video length matches audio length from the source
-        if is_video_workflow and frame.duration:
+        if is_video_workflow and frame.duration and not api_video_params.get("duration"):
             media_params["duration"] = frame.duration
-            logger.info(f"  → Generating video with target duration: {frame.duration:.2f}s (from TTS audio)")
-        
+            logger.info(
+                f"  → Generating video with target duration: {frame.duration:.2f}s (from TTS audio)"
+            )
+
         # Call Media generation (with retry for transient provider/network errors)
         media_result = await with_retry(
             lambda: self.core.media(**media_params),
             label=f"media(frame={frame.index},type={media_type})",
         )
-        
+
         # Store media type
         frame.media_type = media_result.media_type
-        
+
         if media_result.is_image:
             # Download image to local (pass task_id)
             local_path = await self._download_media(
-                media_result.url,
-                frame.index,
-                config.task_id,
-                media_type="image"
+                media_result.url, frame.index, config.task_id, media_type="image"
             )
             frame.image_path = local_path
             logger.debug(f"  ✓ Image generated: {local_path}")
-        
+
         elif media_result.is_video:
             # Download video to local (pass task_id)
             local_path = await self._download_media(
-                media_result.url,
-                frame.index,
-                config.task_id,
-                media_type="video"
+                media_result.url, frame.index, config.task_id, media_type="video"
             )
             frame.video_path = local_path
-            
+
             # Update duration from video if available
             if media_result.duration:
                 frame.duration = media_result.duration
@@ -357,7 +353,7 @@ class FrameProcessor:
                 # Get video duration from file
                 frame.duration = await self._get_video_duration(local_path)
                 logger.debug(f"  ✓ Video generated: {local_path} (duration: {frame.duration:.2f}s)")
-        
+
         else:
             raise ValueError(f"Unknown media type: {media_result.media_type}")
 
@@ -373,7 +369,11 @@ class FrameProcessor:
         if api_video_params.pop("use_narration_audio_as_driving_audio", False):
             api_video_params["audio_path"] = frame.audio_path
 
-        if frame.image_path or api_video_params.get("first_clip_path") or api_video_params.get("first_video_path"):
+        if (
+            frame.image_path
+            or api_video_params.get("first_clip_path")
+            or api_video_params.get("first_video_path")
+        ):
             return
 
         first_frame_workflow = api_video_params.pop("first_frame_workflow", None)
@@ -400,107 +400,103 @@ class FrameProcessor:
             config.task_id,
             media_type="image",
         )
-    
+
     async def _step_compose_frame(
-        self,
-        frame: StoryboardFrame,
-        storyboard: 'Storyboard',
-        config: StoryboardConfig
+        self, frame: StoryboardFrame, storyboard: "Storyboard", config: StoryboardConfig
     ):
         """Step 3: Compose frame with subtitle using HTML template"""
         # Resume skip: composed image already on disk from a previous run.
         if frame.composed_image_path and os.path.exists(frame.composed_image_path):
-            logger.debug(
-                f"  3/4: Using existing composed frame: {frame.composed_image_path}"
-            )
+            logger.debug(f"  3/4: Using existing composed frame: {frame.composed_image_path}")
             return
 
         logger.debug(f"  3/4: Composing frame {frame.index}...")
 
         # Generate output path using task_id
         from pixelle_video.utils.os_util import get_task_frame_path
+
         output_path = get_task_frame_path(config.task_id, frame.index, "composed")
-        
+
         # For video type: render HTML as transparent overlay image
         # For image type: render HTML with image background
         # In both cases, we need the composed image
         composed_path = await self._compose_frame_html(frame, storyboard, config, output_path)
-        
+
         frame.composed_image_path = composed_path
-        
+
         logger.debug(f"  ✓ Frame composed: {composed_path}")
-    
+
     async def _compose_frame_html(
         self,
         frame: StoryboardFrame,
-        storyboard: 'Storyboard',
+        storyboard: "Storyboard",
         config: StoryboardConfig,
-        output_path: str
+        output_path: str,
     ) -> str:
         """Compose frame using HTML template"""
         from pixelle_video.services.frame_html import HTMLFrameGenerator
         from pixelle_video.utils.template_util import resolve_template_path
-        
+
         # Resolve template path (handles various input formats)
         template_path = resolve_template_path(config.frame_template)
-        
+
         # Build ext data
         ext = {
             "index": frame.index + 1,
         }
-        
+
         # Add custom template parameters
         if config.template_params:
             ext.update(config.template_params)
-        
+
         # Generate frame using HTML (size is auto-parsed from template path)
         generator = HTMLFrameGenerator(template_path)
-        
+
         # Use video_path for video media, image_path for images
         media_path = frame.video_path if frame.media_type == "video" else frame.image_path
         logger.debug(f"Generating frame with media: '{media_path}' (type: {frame.media_type})")
-        
+
         composed_path = await generator.generate_frame(
             title=storyboard.title,
             text=frame.narration,
             image=media_path,  # HTMLFrameGenerator handles both image and video paths
             ext=ext,
-            output_path=output_path
+            output_path=output_path,
         )
-        
+
         return composed_path
-    
-    async def _step_create_video_segment(
-        self,
-        frame: StoryboardFrame,
-        config: StoryboardConfig
-    ):
+
+    async def _step_create_video_segment(self, frame: StoryboardFrame, config: StoryboardConfig):
         """Step 4: Create video segment from media + audio"""
         logger.debug(f"  4/4: Creating video segment for frame {frame.index}...")
-        
+
         # Generate output path using task_id
         from pixelle_video.utils.os_util import get_task_frame_path
+
         output_path = get_task_frame_path(config.task_id, frame.index, "segment")
-        
+
         from pixelle_video.services.video import VideoService
+
         video_service = VideoService()
-        
+
         # Branch based on media type
         if frame.media_type == "video":
             # Video workflow: overlay HTML template on video, then add audio
             logger.debug("  → Using video-based composition with HTML overlay")
-            
+
             # Step 1: Overlay transparent HTML image on video
             # The composed_image_path contains the rendered HTML with transparent background
-            temp_video_with_overlay = get_task_frame_path(config.task_id, frame.index, "video") + "_overlay.mp4"
-            
+            temp_video_with_overlay = (
+                get_task_frame_path(config.task_id, frame.index, "video") + "_overlay.mp4"
+            )
+
             video_service.overlay_image_on_video(
                 video=frame.video_path,
                 overlay_image=frame.composed_image_path,
                 output=temp_video_with_overlay,
-                scale_mode="contain"  # Scale video to fit template size (contain mode)
+                scale_mode="contain",  # Scale video to fit template size (contain mode)
             )
-            
+
             # Step 2: Add narration audio to the overlaid video
             # Note: The video might have audio (replaced) or be silent (audio added)
             segment_path = video_service.merge_audio_video(
@@ -508,39 +504,40 @@ class FrameProcessor:
                 audio=frame.audio_path,
                 output=output_path,
                 replace_audio=True,  # Replace video audio with narration
-                audio_volume=1.0
+                audio_volume=1.0,
             )
-            
+
             # Clean up temp file
             if os.path.exists(temp_video_with_overlay):
                 os.unlink(temp_video_with_overlay)
-        
+
         elif frame.media_type == "image" or frame.media_type is None:
             # Image workflow: Use composed image directly
             # The asset_default.html template includes the image in the composition
             logger.debug("  → Using image-based composition")
-            
+
             segment_path = video_service.create_video_from_image(
                 image=frame.composed_image_path,
                 audio=frame.audio_path,
                 output=output_path,
-                fps=config.video_fps
+                fps=config.video_fps,
             )
-        
+
         else:
             raise ValueError(f"Unknown media type: {frame.media_type}")
-        
+
         frame.video_segment_path = segment_path
-        
+
         logger.debug(f"  ✓ Video segment created: {segment_path}")
-    
+
     async def _get_audio_duration(self, audio_path: str) -> float:
         """Get audio duration in seconds"""
         try:
             # Try using ffmpeg-python
             import ffmpeg
+
             probe = ffmpeg.probe(audio_path)
-            duration = float(probe['format']['duration'])
+            duration = float(probe["format"]["duration"])
             return duration
         except Exception as e:
             logger.warning(f"Failed to get audio duration: {e}, using estimate")
@@ -549,16 +546,13 @@ class FrameProcessor:
             # Assume ~16kbps for MP3, so 2KB per second
             estimated_duration = file_size / 2000
             return max(1.0, estimated_duration)  # At least 1 second
-    
+
     async def _download_media(
-        self,
-        url: str,
-        frame_index: int,
-        task_id: str,
-        media_type: str
+        self, url: str, frame_index: int, task_id: str, media_type: str
     ) -> str:
         """Download media (image or video) from URL to local file"""
         from pixelle_video.utils.os_util import get_task_frame_path
+
         output_path = get_task_frame_path(task_id, frame_index, media_type)
 
         if url.startswith("file://"):
@@ -577,7 +571,7 @@ class FrameProcessor:
                 response = await client.get(url)
                 response.raise_for_status()
 
-                with open(output_path, 'wb') as f:
+                with open(output_path, "wb") as f:
                     f.write(response.content)
 
         # Retry transient HTTP errors (provider hiccups, 5xx, timeouts).
@@ -587,13 +581,14 @@ class FrameProcessor:
         )
 
         return output_path
-    
+
     async def _get_video_duration(self, video_path: str) -> float:
         """Get video duration in seconds"""
         try:
             import ffmpeg
+
             probe = ffmpeg.probe(video_path)
-            duration = float(probe['format']['duration'])
+            duration = float(probe["format"]["duration"])
             return duration
         except Exception as e:
             logger.warning(f"Failed to get video duration: {e}, using audio duration")

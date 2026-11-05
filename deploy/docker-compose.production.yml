@@ -1,0 +1,14 @@
+# Overlay for the host NGINX deployment. Keep model configuration out of images.
+services:
+  app:
+    build:
+      args:
+        PYTHON_PACKAGE_INDEX: https://mirrors.cloud.tencent.com/pypi/simple
+        DEBIAN_PACKAGE_MIRROR: https://mirrors.cloud.tencent.com
+    environment:
+      PIXELLE_COOKIE_SECURE: "true"
+      TMPDIR: /tmp/pixelle
+    volumes:
+      - ./config.yaml:/app/config.yaml:ro
+    tmpfs:
+      - /tmp/pixelle:uid=10001,gid=10001,mode=0700,size=1536m

@@ -1,0 +1,27 @@
+{
+  "name": "pixelle-studio",
+  "version": "0.2.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 127.0.0.1",
+    "build": "tsc -b && vite build",
+    "check": "tsc --noEmit",
+    "test": "playwright test"
+  },
+  "dependencies": {
+    "@tanstack/react-query": "^5.90.0",
+    "lucide-react": "^0.468.0",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "react-router-dom": "^7.0.0"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.58.0",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "typescript": "^5.7.0",
+    "vite": "^6.0.0",
+    "@vitejs/plugin-react": "^4.3.0"
+  }
+}

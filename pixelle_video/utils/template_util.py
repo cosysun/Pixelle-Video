@@ -339,6 +339,12 @@ def resolve_template_path(template_input: Optional[str]) -> str:
         >>> resolve_template_path("1920x1080/image_default.html")
         'templates/1920x1080/image_default.html'
     """
+    # Server callers materialize registered COS templates into an isolated workspace.
+    if template_input and Path(template_input).is_absolute():
+        path = Path(template_input)
+        if path.suffix != '.html' or not path.is_file():
+            raise FileNotFoundError('模板文件不存在')
+        return str(path)
     # Default case
     if template_input is None:
         template_input = "1080x1920/image_default.html"

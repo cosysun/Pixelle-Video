@@ -1,120 +1,71 @@
-# Pixelle-Video Configuration
-# Copy this file to config.yaml and fill in your settings
-# ⚠️ Never commit config.yaml to Git!
-
 project_name: Pixelle-Video
-
-# ==================== LLM Configuration ====================
-# Supports any OpenAI SDK compatible API
 llm:
-  api_key: ""
-  base_url: ""
-  model: ""
-
-# Popular presets:
-# Qwen Max:        base_url: "https://dashscope.aliyuncs.com/compatible-mode/v1"  model: "qwen-max"
-# OpenAI GPT-4o:   base_url: "https://api.openai.com/v1"                          model: "gpt-4o"
-# DeepSeek:        base_url: "https://api.deepseek.com"                           model: "deepseek-chat"
-# Ollama (Local):  base_url: "http://localhost:11434/v1"                          model: "llama3.2"
-
-# ==================== Direct API Provider Configuration ====================
-# Optional: use providers directly for image/video/VLM generation without ComfyUI workflows.
+  api_key: ''
+  base_url: ''
+  model: ''
 api_providers:
   common:
     print_model_input: false
-    local_proxy: ""
+    local_proxy: ''
   openai:
-    api_key: ""
-    base_url: "https://api.openai.com/v1"
+    api_key: ''
+    base_url: ''
     use_proxy: false
   openrouter:
-    api_key: ""
-    base_url: "https://openrouter.ai/api/v1"
+    api_key: ''
+    base_url: ''
     use_proxy: false
   dashscope:
-    api_key: ""
-    base_url: "https://dashscope.aliyuncs.com/api/v1"
+    api_key: ''
+    base_url: ''
     use_proxy: false
-  ark:
-    api_key: ""
-    base_url: "https://ark.cn-beijing.volces.com/api/v3"
-    use_proxy: false
-  kling:
-    base_url: "https://api-beijing.klingai.com"
-    access_key: ""
-    secret_key: ""
+  deepseek:
+    api_key: ''
+    base_url: ''
     use_proxy: false
   gemini:
-    api_key: ""
-    base_url: "https://generativelanguage.googleapis.com"
+    api_key: ''
+    base_url: ''
+    use_proxy: false
+  ark:
+    api_key: ''
+    base_url: ''
     use_proxy: false
   hunyuan:
-    api_key: ""
-    base_url: "https://tokenhub.tencentmaas.com"
+    api_key: ''
+    base_url: ''
     use_proxy: false
-
-# ==================== Direct API TTS Model Configuration ====================
-# Optional: use third-party APIs for text-to-speech synthesis.
-# Phase one supports MiniMax only.
+  kling:
+    base_url: ''
+    access_key: ''
+    secret_key: ''
+    use_proxy: false
 tts_models:
   default_provider: minimax
   default_model: speech-2.8-turbo
   providers:
     minimax:
-      api_key: ""
-      base_url: "https://api.minimaxi.com"
+      api_key: ''
+      base_url: https://api.minimaxi.com
+      use_proxy: false
       default_model: speech-2.8-turbo
       default_voice_id: null
       default_voice_type: null
-      use_proxy: false
-
-# ==================== ComfyUI Configuration ====================
-comfyui:
-  # Global ComfyUI settings
-  comfyui_url: http://127.0.0.1:8188  # ComfyUI server URL (required for selfhost workflows)
-  comfyui_api_key: ""  # ComfyUI API key (optional, get from https://platform.comfy.org/profile/api-keys)
-  # Note for Docker users: Use host.docker.internal:8188 (Mac/Windows) or host IP address (Linux)
-  runninghub_api_key: ""  # RunningHub API key (required for runninghub workflows)
-  runninghub_concurrent_limit: 1  # Concurrent execution limit for RunningHub (1-10, default 1 for regular members)
-  
-  # TTS-specific configuration
-  tts:
-    inference_mode: api  # local | comfyui | api
-    default_workflow: selfhost/tts_edge.json  # TTS workflow to use
-  
-  # Image-specific configuration
+tts:
+  inference_mode: local
+  local:
+    voice: zh-CN-YunjianNeural
+    speed: 1.2
+media:
   image:
-    # Required: Default workflow to use (no fallback)
-    # Options: api/dashscope/wan2.7-image (recommended, direct API)
-    #          runninghub/image_flux.json (RunningHub)
-    #          selfhost/image_flux.json (requires local ComfyUI)
     default_workflow: api/dashscope/wan2.7-image
-    
-    # Image prompt prefix (optional)
-    prompt_prefix: "Minimalist black and white sketch style with muted watercolor accents, colored pencil elements, expressive matchstick figure interacting with colorful conceptual objects, loose clean lines, storybook illustration, soft lighting"
-  
-  # Video-specific configuration
+    prompt_prefix: Minimalist black and white sketch style with muted watercolor accents,
+      colored pencil elements, expressive matchstick figure interacting with colorful
+      conceptual objects, loose clean lines, storybook illustration, soft lighting
   video:
-    # Required: Default workflow to use (no fallback)
-    # Options: runninghub/video_wan2.1_fusionx.json (recommended, no local setup)
-    #          selfhost/video_wan2.1_fusionx.json (requires local ComfyUI)
-    default_workflow: runninghub/video_wan2.1_fusionx.json
-    
-    # Video prompt prefix (optional)
-    prompt_prefix: "Minimalist black and white sketch style with muted watercolor accents, colored pencil elements, expressive matchstick figure interacting with colorful conceptual objects, loose clean lines, storybook illustration, soft lighting"
-
-# ==================== Template Configuration ====================
-# Configure default template for video generation
+    default_workflow: null
+    prompt_prefix: Minimalist black and white sketch style with muted watercolor accents,
+      colored pencil elements, expressive matchstick figure interacting with colorful
+      conceptual objects, loose clean lines, storybook illustration, soft lighting
 template:
-  # Default frame template to use when not explicitly specified
-  # Determines video aspect ratio and layout style
-  # Template naming convention:
-  #   - static_*.html: Static style templates (no AI-generated media)
-  #   - image_*.html: Templates requiring AI-generated images
-  #   - video_*.html: Templates requiring AI-generated videos
-  # Options: 
-  #   - 1080x1920 (vertical/portrait): image_default.html, image_modern.html, image_elegant.html, static_simple.html, etc.
-  #   - 1080x1080 (square): image_minimal_framed.html, etc.
-  #   - 1920x1080 (horizontal/landscape): image_film.html, image_full.html, etc.
-  # See templates/ directory for all available templates
-  default_template: "1080x1920/image_default.html"
+  default_template: 1080x1920/image_default.html

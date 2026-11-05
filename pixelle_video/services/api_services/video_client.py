@@ -5,9 +5,10 @@
   - kling*    → KlingVideoClient (可灵 AI)
 """
 
-import os
 import logging
+import os
 from typing import Optional
+
 from .config import Config
 
 try:
@@ -76,10 +77,6 @@ class VideoClient:
         resolution: Optional[str] = None,
         last_image_path: Optional[str] = None,
         first_clip_path: Optional[str] = None,
-        reference_image_path: Optional[str] = None,
-        reference_image_paths: Optional[list[str]] = None,
-        reference_video_paths: Optional[list[str]] = None,
-        reference_audio_path: Optional[str] = None,
         audio_path: Optional[str] = None,
         negative_prompt: Optional[str] = None,
         prompt_extend: Optional[bool] = None,
@@ -115,7 +112,7 @@ class VideoClient:
             print("---- VIDEO GENERATION REQUEST ----")
             print(f"Prompt: {prompt}")
             if image_path and str(image_path).startswith("data:"):
-                print(f"Image: [Base64图片]")
+                print("Image: [Base64图片]")
             else:
                 print(f"Image: {image_path}")
             print(f"Model: {model}")
@@ -128,14 +125,6 @@ class VideoClient:
                 print(f"Last Image: {last_image_path}")
             if first_clip_path:
                 print(f"First Clip: {first_clip_path}")
-            if reference_image_path:
-                print(f"Reference Image: {reference_image_path}")
-            if reference_image_paths:
-                print(f"Reference Images: {reference_image_paths}")
-            if reference_video_paths:
-                print(f"Reference Videos: {reference_video_paths}")
-            if reference_audio_path:
-                print(f"Reference Audio: {reference_audio_path}")
             if audio_path:
                 print(f"Audio: {audio_path}")
             if negative_prompt:
@@ -183,10 +172,6 @@ class VideoClient:
                 video_ratio,
                 last_image_path,
                 first_clip_path,
-                reference_image_path,
-                reference_image_paths,
-                reference_video_paths,
-                reference_audio_path,
                 audio_path,
                 negative_prompt,
                 resolution,
@@ -209,10 +194,6 @@ class VideoClient:
         video_ratio: str,
         last_image_path: Optional[str],
         first_clip_path: Optional[str],
-        reference_image_path: Optional[str],
-        reference_image_paths: Optional[list[str]],
-        reference_video_paths: Optional[list[str]],
-        reference_audio_path: Optional[str],
         audio_path: Optional[str],
         negative_prompt: Optional[str],
         resolution: Optional[str],
@@ -233,10 +214,6 @@ class VideoClient:
             video_ratio=video_ratio,
             last_image_path=last_image_path,
             first_clip_path=first_clip_path,
-            reference_image_path=reference_image_path,
-            reference_image_paths=reference_image_paths,
-            reference_video_paths=reference_video_paths,
-            reference_audio_path=reference_audio_path,
             audio_path=audio_path,
             negative_prompt=negative_prompt,
             resolution=resolution,

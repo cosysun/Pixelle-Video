@@ -1,77 +1,37 @@
-# Pixelle-Video Docker Image
-# Based on Python 3.11 slim for smaller image size
+FROM node:22-bookworm-slim AS frontend
+WORKDIR /build
+COPY frontend/package*.json ./
+RUN npm ci
+COPY frontend/ ./
+RUN npm run build
 
-FROM python:3.11-slim
-
-# Build arguments for mirror configuration
-# USE_CN_MIRROR: whether to use China mirrors (true/false)
-ARG USE_CN_MIRROR=false
-
-# Set working directory
+FROM python:3.12-slim-bookworm AS runtime
+ARG PYTHON_PACKAGE_INDEX=https://pypi.org/simple
+ARG DEBIAN_PACKAGE_MIRROR=http://deb.debian.org
+ARG PLAYWRIGHT_CHROMIUM_DOWNLOAD_HOST=
+ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 PIXELLE_VIDEO_ROOT=/app \
+    PLAYWRIGHT_BROWSERS_PATH=/opt/playwright PATH=/app/.venv/bin:$PATH
 WORKDIR /app
-
-# Replace apt sources with China mirrors if needed
-# Debian 12 uses DEB822 format in /etc/apt/sources.list.d/debian.sources
-RUN if [ "$USE_CN_MIRROR" = "true" ]; then \
-    sed -i 's|deb.debian.org|mirrors.aliyun.com|g' /etc/apt/sources.list.d/debian.sources && \
-    sed -i 's|security.debian.org|mirrors.aliyun.com|g' /etc/apt/sources.list.d/debian.sources; \
-    fi
-
-# Install system dependencies
-# - curl: for health checks and downloads
-# - ffmpeg: for video/audio processing
-# - fonts-noto-cjk: for CJK character support
-RUN apt-get update && apt-get install -y \
-    curl \
-    ffmpeg \
-    fonts-noto-cjk \
-    && rm -rf /var/lib/apt/lists/*
-
-# Install uv package manager
-# For China: use pip to install uv from mirror (faster and more stable)
-# For International: use official installer script
-RUN if [ "$USE_CN_MIRROR" = "true" ]; then \
-        pip install --no-cache-dir -i https://pypi.tuna.tsinghua.edu.cn/simple/ uv; \
-    else \
-        curl -LsSf https://astral.sh/uv/install.sh | sh; \
-    fi
-ENV PATH="/root/.local/bin:$PATH"
-RUN uv --version
-
-# Copy dependency files and source code for building
-# Note: pixelle_video is needed for hatchling to build the package
+RUN pip install --no-cache-dir --index-url "$PYTHON_PACKAGE_INDEX" uv && \
+    sed -i "s|http://deb.debian.org|$DEBIAN_PACKAGE_MIRROR|g" /etc/apt/sources.list.d/debian.sources && \
+    apt-get update && apt-get install -y --no-install-recommends ffmpeg fonts-noto-cjk curl && rm -rf /var/lib/apt/lists/*
 COPY pyproject.toml uv.lock README.md ./
-COPY pixelle_video ./pixelle_video
+RUN uv export --quiet --frozen --no-dev --no-emit-project --no-header -o /tmp/requirements.txt && \
+    uv venv && uv pip install --require-hashes --index-url "$PYTHON_PACKAGE_INDEX" -r /tmp/requirements.txt && \
+    rm /tmp/requirements.txt
+RUN PLAYWRIGHT_CHROMIUM_DOWNLOAD_HOST="$PLAYWRIGHT_CHROMIUM_DOWNLOAD_HOST" .venv/bin/playwright install --with-deps --no-shell chromium
+COPY pixelle_video/ pixelle_video/
+COPY api/ api/
+COPY templates/ templates/
+COPY bgm/ bgm/
+COPY config.example.yaml ./
+COPY frontend/public/template-previews/ ./frontend/public/template-previews/
+COPY --from=frontend /build/dist ./frontend/dist
+RUN useradd --uid 10001 --create-home studio && mkdir -p /data /tmp/pixelle && chown -R studio:studio /data /tmp/pixelle && chmod -R a+rX /opt/playwright
+USER studio
+EXPOSE 8000
+CMD ["python", "-m", "api.app", "--host", "0.0.0.0", "--port", "8000"]
 
-# Create virtual environment and install dependencies
-# Use -i flag to specify mirror when USE_CN_MIRROR=true
-RUN export UV_HTTP_TIMEOUT=300 && \
-    uv venv && \
-    if [ "$USE_CN_MIRROR" = "true" ]; then \
-        uv pip install -e . -i https://pypi.tuna.tsinghua.edu.cn/simple; \
-    else \
-        uv pip install -e .; \
-    fi && \
-    uv run playwright install --with-deps chromium
-
-# Copy rest of application code
-COPY api ./api
-COPY web ./web
-COPY bgm ./bgm
-COPY templates ./templates
-COPY workflows ./workflows
-COPY resources ./resources
-COPY docs/images ./docs/images
-COPY docs/FAQ*.md ./docs/
-
-# Create output, data and temp directories
-RUN mkdir -p /app/output /app/data /app/temp
-
-# Expose ports
-# 8000: API service
-# 8501: Web UI service
-EXPOSE 8000 8501
-
-# Default command (can be overridden in docker-compose)
-CMD ["uv", "run", "python", "api/app.py"]
-
+FROM nginx:stable-alpine AS edge
+COPY deploy/nginx/default.conf /etc/nginx/conf.d/default.conf
+COPY --from=frontend /build/dist /usr/share/nginx/html

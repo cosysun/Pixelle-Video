@@ -233,7 +233,9 @@ class TaskEditService:
         if image_source_index is not None:
             parent = self._get_frame(storyboard, image_source_index)
             if parent.image_source_index is not None:
-                raise ValueError("Child frames can only be created from a parent frame")
+                raise ValueError("共享画面必须来自主分镜")
+            if image_source_index >= position:
+                raise ValueError("共享画面必须来自插入位置之前的分镜")
         elif self._template_requires_media(storyboard.config) and not image_prompt:
             raise ValueError("Image prompt is required for the current frame template")
 
@@ -277,7 +279,9 @@ class TaskEditService:
         )
 
         self._remove_standard_frame_artifacts(task_id, delete_indexes)
-        storyboard.frames = [frame for frame in storyboard.frames if frame.index not in delete_indexes]
+        storyboard.frames = [
+            frame for frame in storyboard.frames if frame.index not in delete_indexes
+        ]
         self._realign_standard_frame_artifacts(task_id, storyboard.frames)
         self._renumber_frames(storyboard)
         self._sync_frame_counts(storyboard, metadata)
@@ -292,69 +296,26 @@ class TaskEditService:
         Save a best-effort backup of current task metadata/storyboard/final video
         and frame artifacts that are about to be replaced.
         """
-        task_dir = self.persistence.get_task_dir(task_id)
-        revision_id = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
-        revision_dir = task_dir / "revisions" / revision_id
-        revision_dir.mkdir(parents=True, exist_ok=True)
+        row = self.persistence._row(task_id)
+        return (row or {}).get("manifest") or ""
 
-        for name in ("metadata.json", "storyboard.json", "final.mp4"):
-            src = task_dir / name
-            if src.exists():
-                shutil.copy2(src, revision_dir / name)
+    def request_cancel(self, task_id):
+        self._cancelled_tasks = getattr(self, "_cancelled_tasks", set())
+        self._cancelled_tasks.add(task_id)
 
-        frames_dir = task_dir / "frames"
-        if changed_frame_indexes is not None and frames_dir.exists():
-            backup_frames_dir = revision_dir / "frames"
-            backup_frames_dir.mkdir(parents=True, exist_ok=True)
-            prefixes = {f"{index + 1:02d}_" for index in changed_frame_indexes}
-            for path in frames_dir.iterdir():
-                if path.is_file() and any(path.name.startswith(prefix) for prefix in prefixes):
-                    shutil.copy2(path, backup_frames_dir / path.name)
+    def clear_cancel_request(self, task_id):
+        getattr(self, "_cancelled_tasks", set()).discard(task_id)
 
-        logger.info(f"Created task revision backup: {revision_dir}")
-        return str(revision_dir)
-
-    def request_cancel(self, task_id: str) -> None:
-        """Request cooperative cancellation for the current edit operation."""
-        marker = self._cancel_marker_path(task_id)
-        marker.parent.mkdir(parents=True, exist_ok=True)
-        marker.write_text(datetime.now().isoformat(), encoding="utf-8")
-
-    def clear_cancel_request(self, task_id: str) -> None:
-        """Clear a previous cancellation request before a new edit starts."""
-        try:
-            self._cancel_marker_path(task_id).unlink(missing_ok=True)
-        except Exception as e:  # noqa: BLE001
-            logger.debug(f"Failed to clear cancel marker for {task_id}: {e}")
-
-    async def _load_task(self, task_id: str) -> tuple[Storyboard, Dict[str, Any]]:
+    async def _load_task(self, task_id):
         storyboard = await self.persistence.load_storyboard(task_id)
-        if storyboard is None:
-            raise ValueError(f"Task {task_id} has no storyboard.json")
-
         metadata = await self.persistence.load_task_metadata(task_id)
-        if metadata is None:
-            raise ValueError(f"Task {task_id} has no metadata.json")
-
+        if storyboard is None or metadata is None:
+            raise ValueError("该作品没有可编辑的分镜")
         return storyboard, metadata
 
-    def _cancel_marker_path(self, task_id: str):
-        return self.persistence.get_task_dir(task_id) / ".edit_cancel_requested"
-
-    async def _raise_if_cancelled(
-        self,
-        task_id: str,
-        storyboard: Storyboard,
-        metadata: Dict[str, Any],
-    ) -> None:
-        if not self._cancel_marker_path(task_id).exists():
-            return
-
-        metadata["status"] = "cancelled"
-        metadata["completed_at"] = datetime.now().isoformat()
-        await self.persistence.save_storyboard(task_id, storyboard)
-        await self.persistence.save_task_metadata(task_id, metadata)
-        raise TaskEditCancelled(f"Task edit cancelled: {task_id}")
+    async def _raise_if_cancelled(self, task_id, storyboard, metadata):
+        if task_id in getattr(self, "_cancelled_tasks", set()):
+            raise TaskEditCancelled("编辑已取消，上一版作品仍然保留")
 
     def _get_frame(self, storyboard: Storyboard, frame_index: int) -> StoryboardFrame:
         for frame in storyboard.frames:
@@ -362,7 +323,9 @@ class TaskEditService:
                 return frame
         raise IndexError(f"Frame {frame_index} not found")
 
-    def _media_related_frames(self, storyboard: Storyboard, frame_index: int) -> list[StoryboardFrame]:
+    def _media_related_frames(
+        self, storyboard: Storyboard, frame_index: int
+    ) -> list[StoryboardFrame]:
         related = [
             frame
             for frame in storyboard.frames
@@ -393,8 +356,7 @@ class TaskEditService:
             if frame.image_source_index is not None:
                 if frame.image_source_index not in old_to_new:
                     raise ValueError(
-                        f"Frame {frame.index} references deleted frame "
-                        f"{frame.image_source_index}"
+                        f"Frame {frame.index} references deleted frame {frame.image_source_index}"
                     )
                 frame.image_source_index = old_to_new[frame.image_source_index]
             frame.index = new_index
@@ -636,7 +598,11 @@ class TaskEditService:
         bgm_mode: Optional[str] = None,
     ) -> Dict[str, Any]:
         segment_paths = [frame.video_segment_path for frame in storyboard.frames]
-        missing = [str(i + 1) for i, path in enumerate(segment_paths) if not path or not os.path.exists(path)]
+        missing = [
+            str(i + 1)
+            for i, path in enumerate(segment_paths)
+            if not path or not os.path.exists(path)
+        ]
         if missing:
             if metadata.get("status") != "completed":
                 return await self._checkpoint_incomplete_edit(
@@ -645,9 +611,19 @@ class TaskEditService:
                     metadata,
                     missing,
                 )
-            raise ValueError(f"Cannot rebuild final video; missing segment(s): {', '.join(missing)}")
+            raise ValueError(
+                f"Cannot rebuild final video; missing segment(s): {', '.join(missing)}"
+            )
 
-        input_params = metadata.get("input", {})
+        input_params = metadata.setdefault("input", {})
+        input_params["frame_template"] = storyboard.config.frame_template
+        input_params["media_workflow"] = storyboard.config.media_workflow
+        input_params["tts_inference_mode"] = storyboard.config.tts_inference_mode
+        input_params["tts_voice"] = storyboard.config.voice_id
+        input_params["tts_voice_id"] = storyboard.config.tts_voice_id
+        input_params["tts_model"] = storyboard.config.tts_model
+        input_params["tts_speed"] = storyboard.config.tts_speed
+        input_params["api_video_params"] = storyboard.config.api_video_params
         if bgm_path is ...:
             bgm_path = input_params.get("bgm_path")
         if bgm_volume is None:
@@ -655,11 +631,10 @@ class TaskEditService:
         if bgm_mode is None:
             bgm_mode = input_params.get("bgm_mode", "loop")
 
-        final_video_path = (
-            storyboard.final_video_path
-            or metadata.get("result", {}).get("video_path")
-            or str(self.persistence.get_task_dir(task_id) / "final.mp4")
-        )
+        final_video_path = str(self.persistence.get_task_dir(task_id) / "final.mp4")
+        os.makedirs(os.path.dirname(final_video_path), exist_ok=True)
+        if getattr(self.core, "cancel_check", None):
+            self.core.cancel_check()
 
         video_service = getattr(self.core, "video", None) or VideoService()
         video_service.concat_videos(
@@ -678,8 +653,11 @@ class TaskEditService:
         result["video_path"] = final_video_path
         result["duration"] = storyboard.total_duration
         result["n_frames"] = len(storyboard.frames)
-        result["file_size"] = os.path.getsize(final_video_path) if os.path.exists(final_video_path) else 0
+        result["file_size"] = (
+            os.path.getsize(final_video_path) if os.path.exists(final_video_path) else 0
+        )
         metadata["status"] = "completed"
+        metadata.pop("error", None)
         metadata["completed_at"] = datetime.now().isoformat()
 
         await self.persistence.save_storyboard(task_id, storyboard)

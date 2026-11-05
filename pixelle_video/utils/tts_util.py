@@ -14,7 +14,7 @@
 Edge TTS Utility - Temporarily not used
 
 This is the original edge-tts implementation, kept here for potential future use.
-Currently, TTS service uses ComfyUI workflows only.
+TTS uses Edge TTS and direct API providers.
 """
 
 import asyncio

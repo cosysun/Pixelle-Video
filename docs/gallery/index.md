@@ -60,8 +60,7 @@ Showcase of videos created with Pixelle-Video, including complete production par
 
 每个案例都包含：/ Each case includes:
 
-- **📹 成品视频 Video**: OSS 托管的完整视频 / Complete video hosted on OSS
-- **⚙️ 工作流文件 Workflows**: ComfyUI 工作流 JSON / ComfyUI workflow JSON files
+- **📹 成品视频 Video**: COS 托管的完整视频 / Complete video hosted on COS
 - **📝 配置文件 Config**: 完整的生成配置 / Complete generation configuration
 - **🎨 提示词 Prompts**: 所有使用的提示词 / All prompts used
 - **📥 一键复现 Reproduce**: 可直接导入使用 / Can be imported directly

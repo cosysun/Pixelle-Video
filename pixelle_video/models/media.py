@@ -22,7 +22,7 @@ class MediaResult(BaseModel):
     """
     Media generation result from workflow execution
     
-    Supports both image and video outputs from ComfyUI workflows.
+    Supports image and video outputs from direct API providers.
     The media_type indicates what kind of media was generated.
     
     Attributes:

@@ -207,7 +207,7 @@ export default function WorkDetail() {
                   template_id: templateAsset?.id || input.template_id || "",
                 }),
               );
-              navigate("/");
+              navigate("/studio");
             }}
           >
             <Copy size={16} />

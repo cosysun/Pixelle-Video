@@ -365,14 +365,94 @@ def test_legacy_manual_prices_remain_estimated_until_user_verifies_value(engine)
     assert engine.repository.revisions(opening["id"])[0]["payload"]["estimated"]
 
 
-def test_daily_pnl_beijing_midnight_minus_new_external_money(engine):
+def test_trading_day_pnl_minus_new_external_money(engine):
     engine.create_record(record("opening_cash", amount="100"))
     engine.create_record(record("deposit", amount="50", occurred_at="2026-11-05T01:00:00Z"))
     engine.create_record(record("fee", amount="3", occurred_at="2026-11-05T01:30:00Z"))
     value = engine.overview(NOW)
-    assert value["daily_baseline_at"] == "2026-11-04T16:00:00.000000+00:00"
+    assert value["daily_baseline_at"] == "2026-11-05T00:00:00.000000+00:00"
     assert value["daily_net_external"] == "50"
     assert value["daily_pnl"] == "-3"
+    assert value["daily_date"] == "2026-11-05"
+    assert value["daily_baseline_assets"] == "100"
+
+
+def test_trading_day_pnl_keeps_complete_us_session_across_beijing_midnight(engine):
+    engine.repository.add_fx(
+        {"currency": "USD", "rate": "7", "occurred_at": DAY, "kind": "historical"}
+    )
+    engine.create_record(record("opening_capital", amount="700"))
+    engine.create_record(
+        record(
+            "opening_position",
+            market="US",
+            symbol="TEST",
+            currency="USD",
+            quantity="1",
+            price="100",
+        )
+    )
+    engine.repository.add_price(
+        {"market": "US", "symbol": "TEST", "price": "100", "occurred_at": DAY, "kind": "daily"}
+    )
+    engine.repository.add_price(
+        {"market": "US", "symbol": "TEST", "price": "120", "occurred_at": "2026-11-04T15:59:00Z"}
+    )
+    engine.repository.add_price(
+        {"market": "US", "symbol": "TEST", "price": "110", "occurred_at": "2026-11-04T21:00:00Z"}
+    )
+    value = engine.overview("2026-11-04T22:00:00Z")
+    assert value["daily_date"] == "2026-11-04"
+    assert value["daily_baseline_assets"] == "700"
+    assert value["daily_pnl"] == "70"
+    assert value["daily_breakdown"][2] == {"market": "US", "pnl": "70"}
+    assert value["cumulative_pnl"] == "70"
+
+
+def test_long_curve_appends_latest_real_sample_without_bridging_or_rewriting(engine):
+    engine.create_record(record("opening_cash", amount="100"))
+    first = NOW - timedelta(minutes=10)
+    last = NOW - timedelta(minutes=1)
+    engine.repository.save_snapshot(
+        first,
+        "minute",
+        {
+            "total": "105",
+            "total_assets": "105",
+            "cumulative_pnl": "5",
+            "net_invested": "100",
+            "complete": True,
+        },
+    )
+    engine.repository.save_snapshot(
+        last,
+        "minute",
+        {
+            "total": "110",
+            "total_assets": "110",
+            "cumulative_pnl": "10",
+            "net_invested": "100",
+            "complete": True,
+        },
+    )
+    engine.repository.save_snapshot(
+        NOW + timedelta(minutes=1),
+        "minute",
+        {"total": "999", "total_assets": "999", "cumulative_pnl": "899", "net_invested": "100"},
+    )
+    before = engine.repository.snapshots()
+    curve = engine.curve("all")
+    assert curve["points"][-1]["occurred_at"] == timestamp(last)
+    assert curve["points"][-1]["total_assets"] == "110"
+    assert curve["points"][-1]["kind"] == "latest_sample"
+    assert curve["points"][-1]["break_before"]
+    assert curve["points"][-1]["time_weighted_return"] == "10"
+    assert len(curve["segments"][-1]) == 1
+    assert engine.repository.snapshots() == before
+    assert [p["occurred_at"] for p in engine.curve("today")["points"]] == [
+        timestamp(first),
+        timestamp(last),
+    ]
 
 
 def test_crud_validates_entire_replay_and_preserves_revisions(engine):
@@ -498,6 +578,16 @@ def test_time_weighted_stale_flow_boundary_estimate_and_missing_price_chain(engi
             "kind": "daily",
         }
     )
+    engine.repository.add_price(
+        {
+            "market": "A",
+            "symbol": "600000",
+            "price": "110",
+            "occurred_at": timestamp(sample),
+            "kind": "quote",
+        }
+    )
+    engine._rebuild_existing_samples()
     repaired = engine.curve("today")["points"][0]
     assert repaired["time_weighted_return"] == "0.5"
     assert repaired["twr_estimated"]
@@ -724,6 +814,39 @@ async def test_closed_market_loop_skips_minute_but_refreshes_daily_after_08(engi
     assert len(engine.repository.snapshots(kind="minute")) == 1
 
 
+async def test_refresh_gets_final_close_once_and_does_not_fake_updated_quote_time(
+    engine, monkeypatch
+):
+    engine.create_record(record("opening_position", quantity="1", price="10"))
+    close = NOW - timedelta(seconds=30)
+    engine.provider.sessions = lambda at: [
+        {
+            "market": "A",
+            "state": "closed",
+            "close_at": timestamp(close),
+            "market_date": "2026-11-05",
+            "next_open": None,
+        }
+    ]
+    engine.repository.set_setting("history_day", "2026-11-05")
+    first = await engine.refresh(active_only=True)
+    assert engine.provider.calls.count("quotes") == 1
+    assert first["updated_at"] == timestamp(NOW)
+    assert engine.repository.get_setting("closing_sample:A") == "2026-11-05"
+    assert len(engine.repository.snapshots(kind="minute")) == 1
+    later = NOW + timedelta(minutes=1)
+    monkeypatch.setattr(
+        service_module,
+        "parse_time",
+        lambda value=None: later if value is None else parse_time(value),
+    )
+    second = await engine.refresh(active_only=True)
+    assert engine.provider.calls.count("quotes") == 1
+    assert len(engine.repository.snapshots(kind="minute")) == 1
+    assert second["updated_at"] == timestamp(NOW)
+    assert second["refresh"]["occurred_at"] == timestamp(later)
+
+
 async def test_history_waits_until_beijing_08_and_stale_prices_warn(engine, monkeypatch):
     before = datetime(2026, 11, 4, 23, tzinfo=UTC)
     monkeypatch.setattr(
@@ -767,3 +890,397 @@ async def test_refresh_lock_and_shutdown_cancel_manual_task(engine):
     assert cancelled.is_set()
     assert engine._manual_refresh is None
     assert not engine._refresh_lock.locked()
+
+
+def test_trading_day_breakdown_includes_trades_fee_dividend_and_fx(engine):
+    engine.repository.add_fx({"currency": "USD", "rate": "7", "occurred_at": DAY})
+    engine.create_record(record("opening_cash", amount="1000"))
+    engine.create_record(record("opening_capital", amount="700"))
+    engine.create_record(
+        record(
+            "opening_position",
+            market="US",
+            symbol="TEST",
+            currency="USD",
+            quantity="1",
+            price="100",
+        )
+    )
+    engine.repository.add_price(
+        {"market": "US", "symbol": "TEST", "price": "100", "occurred_at": DAY, "kind": "daily"}
+    )
+    engine.repository.add_price(
+        {"market": "US", "symbol": "TEST", "price": "110", "occurred_at": "2026-11-04T21:00:00Z"}
+    )
+    engine.repository.add_price(
+        {"market": "A", "symbol": "600000", "price": "12", "occurred_at": "2026-11-04T07:00:00Z"}
+    )
+    engine.create_record(
+        record("buy", quantity="10", price="10", fee="1", occurred_at="2026-11-04T02:00:00Z")
+    )
+    engine.create_record(
+        record("sell", quantity="5", price="12", fee="2", occurred_at="2026-11-04T06:00:00Z")
+    )
+    engine.create_record(record("dividend", amount="3", occurred_at="2026-11-04T07:00:00Z"))
+    engine.create_record(record("deposit", amount="50", occurred_at="2026-11-04T15:00:00Z"))
+    engine.repository.add_fx(
+        {"currency": "USD", "rate": "8", "occurred_at": "2026-11-04T21:00:00Z"}
+    )
+    value = engine.overview("2026-11-04T22:00:00Z")
+    assert value["daily_pnl"] == "200"
+    assert value["daily_net_external"] == "50"
+    assert value["daily_breakdown"] == [
+        {"market": "A", "pnl": "20"},
+        {"market": "HK", "pnl": "0"},
+        {"market": "US", "pnl": "80"},
+        {"market": "OTHER", "pnl": "100"},
+    ]
+
+
+def test_trading_day_results_freeze_on_weekend_and_reset_at_next_open(engine):
+    engine.create_record(record("opening_cash", amount="100"))
+    engine.create_record(record("dividend", amount="10", occurred_at="2026-11-06T07:00:00Z"))
+    engine.create_record(record("fee", amount="3", occurred_at="2026-11-07T05:00:00Z"))
+    friday = engine.overview("2026-11-07T00:00:00Z")
+    weekend = engine.overview("2026-11-08T03:00:00Z")
+    assert friday["daily_date"] == weekend["daily_date"] == "2026-11-06"
+    assert friday["daily_pnl"] == weekend["daily_pnl"] == "10"
+    monday = engine.overview("2026-11-09T01:30:00Z")
+    assert monday["daily_date"] == "2026-11-09"
+    assert monday["daily_previous_date"] == "2026-11-06"
+    assert monday["daily_pnl"] == "-3"
+
+
+def test_trading_day_curve_contains_both_sides_of_beijing_midnight(engine, monkeypatch):
+    engine.create_record(record("opening_cash", amount="100"))
+    samples = ["2026-11-04T15:59:00Z", "2026-11-04T16:00:00Z", "2026-11-04T21:00:00Z"]
+    for sample in samples:
+        engine.repository.save_snapshot(sample, "minute", engine.overview(sample))
+    monkeypatch.setattr(
+        service_module,
+        "parse_time",
+        lambda value=None: parse_time("2026-11-04T22:00:00Z")
+        if value is None
+        else parse_time(value),
+    )
+    curve = engine.curve("today")
+    assert curve["trading_date"] == "2026-11-04"
+    assert [p["occurred_at"] for p in curve["points"]] == [timestamp(s) for s in samples]
+    assert [len(segment) for segment in curve["segments"]] == [2, 1]
+
+
+def test_daily_return_matches_daily_pnl_despite_cumulative_loss_and_external_flows(
+    engine, monkeypatch
+):
+    engine.create_record(record("opening_cash", amount="950"))
+    engine.create_record(record("opening_capital", amount="50"))
+    engine.create_record(record("dividend", amount="10", occurred_at="2026-11-05T02:00:00Z"))
+    engine.create_record(record("deposit", amount="1000", occurred_at="2026-11-05T02:01:00Z"))
+    engine.create_record(record("withdraw", amount="500", occurred_at="2026-11-05T02:02:00Z"))
+    engine.create_record(record("fee", amount="20", occurred_at="2026-11-05T02:03:00Z"))
+    samples = [f"2026-11-05T02:0{i}:00Z" for i in range(4)]
+    for sample in samples:
+        value = engine.overview(sample)
+        # Older snapshots may lack the field or contain a previous formula.
+        value["daily_return"] = "999"
+        engine.repository.save_snapshot(sample, "minute", value)
+    monkeypatch.setattr(
+        service_module,
+        "parse_time",
+        lambda value=None: parse_time("2026-11-05T02:04:00Z")
+        if value is None
+        else parse_time(value),
+    )
+    original = engine.repository.snapshots(kind="minute")
+    curve = engine.curve("today")
+    assert curve["daily_baseline_assets"] == "950"
+    assert [p["daily_pnl"] for p in curve["points"]] == ["10", "10", "10", "-10"]
+    assert [p["daily_net_external"] for p in curve["points"]] == ["0", "1000", "500", "500"]
+    assert all(Decimal(p["cumulative_return"]) < 0 for p in curve["points"])
+    for point in curve["points"]:
+        overview = engine.overview(point["occurred_at"])
+        assert point["daily_return"] == overview["daily_return"]
+        assert (Decimal(point["daily_return"]) > 0) == (Decimal(point["daily_pnl"]) > 0)
+    assert engine.repository.snapshots(kind="minute") == original
+    next_day = engine.overview("2026-11-06T01:30:00Z")
+    assert next_day["daily_return"] == "0"
+    assert Decimal(next_day["cumulative_return"]) < 0
+
+
+def test_daily_return_missing_for_nonpositive_baseline_or_incomplete_value(engine, monkeypatch):
+    engine.create_record(record("deposit", amount="100", occurred_at="2026-11-05T02:00:00Z"))
+    sample = "2026-11-05T02:01:00Z"
+    assert engine.overview(sample)["daily_pnl"] == "0"
+    assert engine.overview(sample)["daily_return"] is None
+    value = engine.overview(sample)
+    value["total"] = value["total_assets"] = None
+    engine.repository.save_snapshot(sample, "minute", value)
+    monkeypatch.setattr(
+        service_module,
+        "parse_time",
+        lambda value=None: parse_time(sample) if value is None else parse_time(value),
+    )
+    point = engine.curve("today")["points"][0]
+    assert point["daily_return"] is None
+    assert point["daily_pnl"] is None
+
+
+def test_trading_curve_excludes_premarket_and_rest_and_masks_stale_quotes(engine, monkeypatch):
+    engine.repository.add_fx({"currency": "USD", "rate": "7", "occurred_at": DAY})
+    engine.create_record(
+        record(
+            "opening_position",
+            market="US",
+            symbol="TEST",
+            currency="USD",
+            quantity="1",
+            price="100",
+        )
+    )
+    engine.repository.add_price(
+        {"market": "US", "symbol": "TEST", "price": "100", "occurred_at": DAY, "kind": "daily"}
+    )
+    source = "2026-11-04T14:31:00Z"
+    engine.repository.add_price(
+        {
+            "market": "US",
+            "symbol": "TEST",
+            "price": "110",
+            "occurred_at": source,
+            "market_date": "2026-11-04",
+        }
+    )
+    samples = [
+        "2026-11-04T13:00:00Z",
+        "2026-11-04T14:31:30Z",
+        "2026-11-04T14:48:00Z",
+        "2026-11-04T22:00:00Z",
+    ]
+    for at in samples:
+        engine.repository.save_snapshot(at, "minute", engine.overview(at))
+    monkeypatch.setattr(
+        service_module,
+        "parse_time",
+        lambda value=None: parse_time("2026-11-04T22:30:00Z")
+        if value is None
+        else parse_time(value),
+    )
+    curve = engine.curve("today")
+    assert [p["occurred_at"] for p in curve["points"]] == [
+        timestamp(samples[1]),
+        timestamp(samples[2]),
+    ]
+    assert curve["points"][0]["total_assets"] == "770"
+    assert curve["points"][1]["total_assets"] is None
+    assert curve["points"][1]["chart_stale"]
+    assert len(curve["segments"]) == 1
+    assert len(engine.repository.snapshots(kind="minute")) == 4
+
+
+def test_verified_us_close_is_placed_at_session_close_without_filling_gap(engine, monkeypatch):
+    engine.repository.add_fx({"currency": "USD", "rate": "7", "occurred_at": DAY})
+    engine.create_record(
+        record(
+            "opening_position",
+            market="US",
+            symbol="TEST",
+            currency="USD",
+            quantity="1",
+            price="100",
+        )
+    )
+    engine.repository.add_price(
+        {"market": "US", "symbol": "TEST", "price": "100", "occurred_at": DAY, "kind": "daily"}
+    )
+    engine.repository.add_price(
+        {
+            "market": "US",
+            "symbol": "TEST",
+            "price": "90",
+            "occurred_at": "2026-11-04T21:00:02Z",
+            "market_date": "2026-11-04",
+        }
+    )
+    monkeypatch.setattr(
+        service_module,
+        "parse_time",
+        lambda value=None: parse_time("2026-11-04T22:30:00Z")
+        if value is None
+        else parse_time(value),
+    )
+    curve = engine.curve("today")
+    assert len(curve["points"]) == 1
+    point = curve["points"][0]
+    assert point["kind"] == "close"
+    assert point["chart_at"] == timestamp("2026-11-04T21:00:00Z")
+    assert point["occurred_at"] == timestamp("2026-11-04T21:00:02Z")
+    assert point["break_before"]
+    assert engine.repository.snapshots(kind="minute") == []
+
+
+def test_compounded_curve_starts_at_recorded_capital_return_and_keeps_global_baseline(engine):
+    engine.create_record(record("opening_cash", amount="900"))
+    engine.create_record(record("opening_capital", amount="100"))
+    engine.create_record(record("dividend", amount="90", occurred_at="2026-11-04T03:00:00Z"))
+    sample = NOW - timedelta(minutes=1)
+    engine.repository.save_snapshot(sample, "minute", engine.overview(sample))
+    for period in ["today", "week", "month", "quarter", "all"]:
+        curve = engine.curve(period)
+        assert curve["return_baseline_rate"] == "-10"
+        assert curve["return_method"] == "initial_capital_linked_twr"
+        assert "-10.00%" in curve["return_note"]
+        assert curve["points"][-1]["compounded_return"] == "-1"
+        assert curve["points"][-1]["cumulative_return"] == "-1"
+    start = engine.curve("all")["points"][0]
+    assert start["compounded_return"] == start["cumulative_return"] == "-10"
+    assert start["time_weighted_return"] == "0"
+    deposited = engine.create_record(
+        record("deposit", amount="990", occurred_at="2026-11-04T04:00:00Z")
+    )
+    point_value = engine.curve("today")["points"][0]
+    assert point_value["compounded_return"] == "-1"
+    assert abs(Decimal(point_value["cumulative_return"]) - Decimal("-0.502512562814")) < Decimal(
+        "1e-12"
+    )
+    engine.update_record(deposited["id"], {"fee": "19.8"})
+    assert engine.curve("today")["points"][0]["compounded_return"] == "-1.99"
+    restarted = InvestmentService(engine.database, FakeProvider())
+    assert restarted.curve("today")["points"] == engine.curve("today")["points"]
+
+
+def test_compounded_curve_missing_opening_capital_does_not_fall_back_to_zero(engine):
+    engine.create_record(record("opening_cash", amount="900"))
+    engine.create_record(record("opening_capital", amount="100"))
+    first = engine.repository.snapshots(kind="daily")[0]
+    payload = {**first["payload"], "net_invested": None}
+    engine.repository.save_snapshot(first["occurred_at"], "daily", payload)
+    curve = engine.curve("all")
+    assert curve["return_baseline_rate"] is None
+    assert curve["points"][0]["compounded_return"] is None
+    assert curve["points"][0]["time_weighted_return"] == "0"
+
+
+def test_delayed_hk_quote_keeps_mixed_asian_curve_and_real_source_times(engine, monkeypatch):
+    engine.create_record(record("deposit", amount="1000"))
+    engine.create_record(record("opening_position", quantity="1", price="10"))
+    engine.create_record(
+        record(
+            "opening_position",
+            market="HK",
+            symbol="00700",
+            currency="HKD",
+            quantity="1",
+            price="100",
+        )
+    )
+    engine.repository.add_fx({"currency": "HKD", "rate": "1", "occurred_at": DAY})
+    for market, symbol, price in [("A", "600000", "10"), ("HK", "00700", "100")]:
+        engine.repository.add_price(
+            {
+                "market": market,
+                "symbol": symbol,
+                "price": price,
+                "occurred_at": DAY,
+                "kind": "daily",
+            }
+        )
+    samples = [
+        ("02:30:40", "02:15:33", "02:30:33"),
+        ("02:40:40", "02:15:33", "02:40:33"),
+        ("03:55:40", "03:40:33", "03:29:33"),
+        ("05:00:40", "03:59:59", "05:00:33"),
+        ("08:15:40", "07:59:59", "07:00:09"),
+    ]
+    for at, hk_at, a_at in samples:
+        for market, symbol, price, source_at in [
+            ("A", "600000", "11", a_at),
+            ("HK", "00700", "110", hk_at),
+        ]:
+            engine.repository.add_price(
+                {
+                    "market": market,
+                    "symbol": symbol,
+                    "price": price,
+                    "occurred_at": f"2026-11-06T{source_at}Z",
+                    "market_date": "2026-11-06",
+                    "source": "tencent",
+                }
+            )
+        at = f"2026-11-06T{at}Z"
+        engine.repository.save_snapshot(at, "minute", engine.overview(at))
+    original = engine.repository.snapshots(kind="minute")
+    monkeypatch.setattr(
+        service_module,
+        "parse_time",
+        lambda value=None: parse_time("2026-11-06T22:00:00Z")
+        if value is None
+        else parse_time(value),
+    )
+    curve = engine.curve("today")
+    assert len(curve["points"]) == len(samples)
+    for index in [0, 2, 3, 4]:
+        point = curve["points"][index]
+        assert point["total_assets"] == "1121"
+        assert abs(Decimal(point["daily_return"]) - Decimal(1100) / Decimal(1110)) < Decimal("1e-25")
+        assert point["quote_delayed"] and point["daily_return_estimated"]
+        assert not point["chart_stale"]
+        assert point["items"][1]["price_at"] == timestamp(f"2026-11-06T{samples[index][1]}Z")
+    assert curve["points"][1]["chart_stale"]
+    assert curve["points"][1]["daily_return"] is None
+    assert curve["points"][-1]["chart_at"] == timestamp("2026-11-06T08:00:00Z")
+    assert engine.repository.snapshots(kind="minute") == original
+
+
+@pytest.mark.asyncio
+async def test_delayed_hk_close_is_sampled_after_five_minutes_and_only_until_verified(
+    engine, monkeypatch
+):
+    engine.create_record(
+        record(
+            "opening_position",
+            market="HK",
+            symbol="00700",
+            currency="HKD",
+            quantity="1",
+            price="100",
+        )
+    )
+    close = parse_time("2026-11-06T08:00:00Z")
+    at = close + timedelta(minutes=16)
+    monkeypatch.setattr(
+        service_module, "parse_time", lambda value=None: at if value is None else parse_time(value)
+    )
+
+    class DelayedProvider(FakeProvider):
+        def sessions(self, observed):
+            return [
+                {
+                    "market": "HK",
+                    "state": "closed",
+                    "close_at": timestamp(close),
+                    "market_date": "2026-11-06",
+                    "quote_delay_seconds": 900,
+                }
+            ]
+
+        async def quotes(self, instruments):
+            self.calls.append("quotes")
+            return [
+                {
+                    **item,
+                    "price": "110",
+                    "source": "tencent",
+                    "occurred_at": timestamp(close),
+                    "market_date": "2026-11-06",
+                }
+                for item in instruments
+            ]
+
+    engine.provider = DelayedProvider()
+    engine.repository.set_setting("history_day", "2026-11-06")
+    await engine.refresh(active_only=True)
+    assert engine.provider.calls.count("quotes") == 1
+    assert engine.repository.get_setting("closing_sample:HK") == "2026-11-06"
+    await engine.refresh(active_only=True)
+    assert engine.provider.calls.count("quotes") == 1
+    assert len(engine.repository.snapshots(kind="minute")) == 1

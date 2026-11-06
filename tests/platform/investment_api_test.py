@@ -359,7 +359,8 @@ def test_oversell_create_update_and_void_roll_back_ledger_audit_and_samples(clie
 def test_update_void_preserve_revisions_and_revalue_only_actual_minute_times(client, platform):
     _, buy = seed(client)
     repository = platform.investment.repository
-    repository.add_price(quote())
+    repository.add_price(quote(occurred_at=NOW - timedelta(minutes=13)))
+    repository.add_price(quote(occurred_at=NOW - timedelta(minutes=3)))
     times = [NOW - timedelta(minutes=12), NOW - timedelta(minutes=2)]
     for observed in times:
         repository.save_snapshot(observed, "minute", platform.investment.overview(observed))
@@ -502,7 +503,7 @@ def test_curve_derives_returns_from_each_legacy_snapshot_without_rewriting_it(cl
     before = repository.snapshots()
     for period in ("today", "all"):
         points = success(client.get(PREFIX + "/curve", params={"period": period}))["points"]
-        assert [point["cumulative_return"] for point in points] == [
+        expected = [
             "10",
             "5",
             None,
@@ -511,6 +512,10 @@ def test_curve_derives_returns_from_each_legacy_snapshot_without_rewriting_it(cl
             None,
             "-5",
         ]
+        if period == "all":
+            expected.append("-5")
+            assert points[-1]["kind"] == "latest_sample" and points[-1]["break_before"]
+        assert [point["cumulative_return"] for point in points] == expected
     assert repository.snapshots() == before
 
 

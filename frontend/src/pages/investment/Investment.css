@@ -2,7 +2,6 @@
 .investment-heading { display: flex; align-items: center; justify-content: space-between; gap: 20px; padding: 8px 0 2px; }
 .investment-kicker { display: block; font-size: 9px; letter-spacing: 1.8px; font-weight: 600; color: #8b7c9b; margin-bottom: 7px; }
 .investment-heading h1 { font-size: 30px; font-weight: 600; letter-spacing: -1px; }
-.investment-heading h1 > span { color: var(--purple); }
 .investment-heading p { color: #807787; font-size: 12px; margin-top: 8px; }
 .investment-heading-actions { display: flex; gap: 10px; }
 .investment-page .button { font-size: 12px; }
@@ -211,3 +210,18 @@
 .investment-warning-text { color: #9a772d !important; }
 .investment-position-source { min-width: 0; }
 .investment-position-source > small { color: #907da1; font-size: 9px; overflow-wrap: anywhere; }
+
+.investment-daily-breakdown { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; padding: 14px 18px; border: 1px solid #e5e0e9; border-radius: 12px; background: #fff; }
+.investment-daily-breakdown > div { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 6px; }
+.investment-daily-breakdown span, .investment-chart-trading-date { color: #827789; font-size: 11px; }
+.investment-daily-breakdown strong { font-size: 13px; font-weight: 500; font-variant-numeric: tabular-nums; }
+.investment-chart-trading-date { margin: -2px 0 12px; }
+@media (max-width: 767px) { .investment-daily-breakdown { grid-template-columns: repeat(2, minmax(0, 1fr)); padding: 12px 13px; } }
+
+.investment-records > .investment-section-head { margin-bottom: 0; align-items: center; }
+.investment-records-toggle { display: flex; align-items: center; gap: 8px; border: 0; background: none; color: inherit; font: inherit; padding: 8px 0; text-align: left; cursor: pointer; }
+.investment-records-toggle > svg { color: #9585b0; transition: transform .15s ease; }
+.investment-records-toggle[aria-expanded="true"] > svg { transform: rotate(180deg); }
+.investment-records-toggle small { margin-left: 2px; white-space: nowrap; }
+.investment-records-toggle:focus-visible { outline: 2px solid var(--purple); outline-offset: 4px; border-radius: 4px; }
+#investment-records-content:not([hidden]) { margin-top: 18px; }

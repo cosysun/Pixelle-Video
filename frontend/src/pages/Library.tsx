@@ -59,7 +59,7 @@ export default function Library() {
           </h1>
           <p>找回灵感，继续打磨。好故事值得被收藏。</p>
         </div>
-        <Button onClick={() => navigate("/")}>
+        <Button onClick={() => navigate("/studio")}>
           <Plus size={18} />
           开始新创作
         </Button>
@@ -144,7 +144,7 @@ export default function Library() {
             ? "换个关键词或筛选条件试试。"
             : "在创作工作台写下一个想法，让它成为你的第一段故事。"}
           <br />
-          <Button variant="secondary" onClick={() => navigate("/")}>
+          <Button variant="secondary" onClick={() => navigate("/studio")}>
             <Plus size={16} />
             去创作
           </Button>

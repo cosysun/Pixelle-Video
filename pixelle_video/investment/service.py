@@ -24,8 +24,9 @@ from .ledger import (
     timestamp,
     value_state,
 )
+from .market import portfolio_trading_day, quote_delay_seconds, quote_is_stale, trading_windows
 from .repository import InvestmentRepository
-from .returns import time_weighted_points
+from .returns import seeded_compounded_points, time_weighted_points
 
 
 class InvestmentService:
@@ -131,10 +132,12 @@ class InvestmentService:
         if "A" in active:
             active.add("FUND")
         for item in result["items"]:
+            item["quote_delay_seconds"] = quote_delay_seconds(item)
+            item["quote_delayed"] = item["quote_delay_seconds"] > 0
             item["stale"] = bool(
                 item["market"] in active
                 and item["price_at"]
-                and parse_time(at) - parse_time(item["price_at"]) > timedelta(minutes=5)
+                and quote_is_stale(item, parse_time(at))
             )
             if item["stale"]:
                 result["warnings"].append(
@@ -142,7 +145,7 @@ class InvestmentService:
                         "code": "stale_price",
                         "market": item["market"],
                         "symbol": item["symbol"],
-                        "message": f"{item['symbol']} 的行情已超过五分钟未更新",
+                        "message": f"{item['symbol']} 的行情已超过正常报价延迟与五分钟更新容差",
                     }
                 )
         for balance in result["cash_balances"]:
@@ -185,45 +188,104 @@ class InvestmentService:
             )
         return state, result
 
+    def _daily_breakdown(self, baseline, current, start, end, total_pnl):
+        """Attribute position and trading cash changes; FX stays in the remainder."""
+        records = self.repository.list_records(at=end)
+        opening = [row for row in records if parse_time(row["occurred_at"]) <= start]
+        before_state = self._ledger().replay(opening, start)
+        breakdown, attributed = [], ZERO
+        for market, markets in (("A", {"A", "FUND"}), ("HK", {"HK"}), ("US", {"US"})):
+            selected = opening + [
+                row
+                for row in records
+                if start < parse_time(row["occurred_at"]) <= end
+                and row["market"] in markets
+                and row["action"] in {"buy", "sell", "split", "dividend", "fee"}
+            ]
+            after_state = self._ledger().replay(selected, end)
+            changes = {}
+            complete = True
+            for value, sign in ((baseline, -1), (current, 1)):
+                for item in value["items"]:
+                    if item["market"] in markets:
+                        native = item["market_value_native"]
+                        if native is None:
+                            complete = False
+                        else:
+                            currency = item["currency"]
+                            changes[currency] = changes.get(currency, ZERO) + sign * Decimal(native)
+            for currency in before_state.cash.keys() | after_state.cash.keys():
+                before = before_state.cash.get(currency, ZERO)
+                after = after_state.cash.get(currency, ZERO)
+                if before is None or after is None:
+                    complete = False
+                else:
+                    changes[currency] = changes.get(currency, ZERO) + after - before
+            pnl = ZERO
+            for currency, change in changes.items():
+                if change == ZERO:
+                    continue
+                fx = self.repository.latest_fx(currency, end)
+                if fx is None:
+                    complete = False
+                else:
+                    pnl += change * Decimal(fx["rate"])
+            pnl = pnl if complete else None
+            breakdown.append({"market": market, "pnl": decimal_string(pnl)})
+            attributed = None if attributed is None or pnl is None else attributed + pnl
+        remainder = None if total_pnl is None or attributed is None else total_pnl - attributed
+        breakdown.append({"market": "OTHER", "pnl": decimal_string(remainder)})
+        return breakdown
+
     def overview(self, at=None, *, _daily=False):
-        """CNY portfolio totals, separate currency cash, and Beijing-day PNL."""
+        """CNY totals and complete local-market trading-day performance."""
         at = parse_time(at)
         with self.database.lock, localcontext() as context:
             context.prec = 100
             state, result = self._value(at, daily=_daily)
-            midnight = datetime.combine(
-                at.astimezone(BEIJING).date(), time.min, BEIJING
-            ).astimezone(UTC)
-            _, baseline = self._value(midnight, daily=_daily)
+            trading = portfolio_trading_day(at)
+            baseline_at = trading["baseline_at"]
+            daily_at = min(at, trading["end_at"])
+            _, baseline = self._value(baseline_at, daily=True)
+            daily_state, daily_value = (state, result) if daily_at == at else self._value(daily_at)
             external = ZERO
-            for flow in state.external_flows:
-                if midnight < parse_time(flow["occurred_at"]) <= at:
+            for flow in daily_state.external_flows:
+                if baseline_at < parse_time(flow["occurred_at"]) <= daily_at:
                     if flow["amount"] is None:
                         external = None
                         break
                     external += flow["amount"]
-            if result["total"] is None or baseline["total"] is None or external is None:
+            if daily_value["total"] is None or baseline["total"] is None or external is None:
                 daily = None
             else:
-                daily = Decimal(result["total"]) - Decimal(baseline["total"]) - external
+                daily = Decimal(daily_value["total"]) - Decimal(baseline["total"]) - external
             result["daily_pnl"] = decimal_string(daily)
-            result["daily_baseline_at"] = timestamp(midnight)
+            result["daily_return"] = cumulative_return_percentage(daily, baseline["total"])
+            result["daily_baseline_at"] = timestamp(baseline_at)
+            result["daily_baseline_assets"] = baseline["total"]
+            result["daily_date"] = trading["date"]
+            result["daily_previous_date"] = trading["previous_date"]
+            result["daily_valuation_at"] = timestamp(daily_at)
+            result["daily_basis"] = "market_trading_day"
+            result["daily_breakdown"] = self._daily_breakdown(
+                baseline, daily_value, baseline_at, daily_at, daily
+            )
             result["daily_net_external"] = decimal_string(external)
             result["daily_complete"] = daily is not None
             if daily is None:
                 result["warnings"].append(
                     {
                         "code": "missing_daily_baseline",
-                        "message": "当日零点估值或随后外部资金流水不完整，无法计算当日收益",
+                        "message": "上一交易日日终估值或期间外部资金流水不完整，无法计算交易日收益",
                     }
                 )
             result["sessions"] = list(self._sessions)
             result["refresh"] = self.repository.get_setting("refresh", {})
-            result["updated_at"] = result["refresh"].get("occurred_at")
-            if result["updated_at"] is None:
-                result["updated_at"] = max(
-                    (item["price_at"] for item in result["items"] if item["price_at"]), default=None
-                )
+            source_times = [item["price_at"] for item in result["items"] if item["price_at"]]
+            source_times += [item["fx_at"] for item in result["items"] if item["fx_at"]]
+            source_times += [item["fx_at"] for item in result["cash_balances"] if item["fx_at"]]
+            # A sampler heartbeat is not evidence of a new market quote.
+            result["updated_at"] = max(source_times, default=None)
             result["migration"] = self.repository.get_setting("migration")
             inception = (result["migration"] or {}).get("inception") or self.repository.get_setting(
                 "inception"
@@ -385,17 +447,27 @@ class InvestmentService:
         baseline_at = parse_time(baseline["occurred_at"]) if baseline else current
         boundaries = self._return_boundaries(self.repository.list_records(), baseline_at, current)
         items = time_weighted_points(points, baseline, boundaries)
+        initial_return = (
+            cumulative_return_percentage(
+                baseline.get("cumulative_pnl"), baseline.get("net_invested")
+            )
+            if baseline
+            else None
+        )
+        items = seeded_compounded_points(items, initial_return)
         day = baseline.get("date") if baseline else None
         if baseline and not day:
             day = baseline_at.astimezone(BEIJING).date().isoformat()
         return items, {
-            "return_method": "twr",
+            "return_method": "initial_capital_linked_twr",
             "return_baseline_at": baseline["occurred_at"] if baseline else None,
             "return_baseline_date": day,
+            "return_baseline_rate": initial_return,
             "return_note": (
-                f"自 {day} 基准资产市值起算，起点为 0%；时间加权，剔除出入金，非年化。期初之前的浮盈不计入本曲线。"
-                if day
-                else "等待完整的期初资产市值建立收益率跟踪起点。"
+                f"自 {day} 的期初收益率 {Decimal(initial_return):+.2f}% 起算"
+                "（当日累计盈亏 ÷ 累计净投入）；包含期初浮盈浮亏，之后复利衔接，剔除出入金影响，非年化。"
+                if day and initial_return is not None
+                else "等待完整的起点累计盈亏、累计净投入及资产市值建立收益率起点。"
             ),
         }
 
@@ -426,24 +498,200 @@ class InvestmentService:
         kind = "minute" if period == "1d" else "daily"
         start = None if period == "all" else current - timedelta(days=durations[period])
         if period == "1d":
-            start = datetime.combine(
-                current.astimezone(BEIJING).date(), time.min, BEIJING
-            ).astimezone(UTC)
+            trading = portfolio_trading_day(current)
+            start = trading["baseline_at"]
+            current = min(current, trading["end_at"])
+        baseline_point = None
+        windows = []
         with self.database.lock:
             rows = self.repository.snapshots(start=start, end=current, kind=kind)
+            if kind == "minute":
+                _, daily_baseline = self._value(start, daily=True)
+                daily_state = self._ledger().replay(
+                    self.repository.list_records(at=current), current
+                )
+                windows = trading_windows(trading["date"])
+                filtered = []
+                for row in rows:
+                    at = parse_time(row["occurred_at"])
+                    value = row["payload"]
+                    delay = max(
+                        (quote_delay_seconds(item) for item in value.get("items", [])), default=0
+                    )
+                    window = next(
+                        (
+                            i
+                            for i, interval in enumerate(windows)
+                            if parse_time(interval["start"])
+                            <= at
+                            <= parse_time(interval["end"]) + timedelta(seconds=90 + delay)
+                        ),
+                        None,
+                    )
+                    if window is None or at <= start:
+                        continue
+                    fresh = True
+                    delayed = False
+                    for item in value.get("items", []):
+                        market = item["market"]
+                        if market not in {"A", "FUND", "HK", "US"}:
+                            continue
+                        sessions = trading_windows(trading["date"], [market])
+                        if any(
+                            parse_time(interval["start"])
+                            <= at
+                            <= parse_time(interval["end"])
+                            + timedelta(seconds=90 + quote_delay_seconds(item))
+                            for interval in sessions
+                        ):
+                            delayed |= quote_delay_seconds(item) > 0
+                            if quote_is_stale(item, at):
+                                fresh = False
+                                break
+                    filtered.append(
+                        {
+                            **row,
+                            "payload": {
+                                **value,
+                                "trading_window": window,
+                                "chart_stale": not fresh,
+                                "quote_delayed": delayed,
+                                "quote_delay_seconds": delay if delayed else 0,
+                                "estimated": bool(value.get("estimated") or delayed),
+                                "chart_at": timestamp(min(at, parse_time(windows[window]["end"]))),
+                            },
+                        }
+                    )
+                rows = filtered
+                baseline_rows = self.repository.snapshots(start=start, end=start, kind="daily")
+                if baseline_rows:
+                    row = baseline_rows[0]
+                    baseline_point = {
+                        **row["payload"],
+                        "occurred_at": row["occurred_at"],
+                        "kind": "baseline",
+                    }
+                    baseline_points, _ = self._time_weighted_curve([baseline_point], current)
+                    baseline_point = baseline_points[0]
+            else:
+                rows = [
+                    row
+                    for row in rows
+                    if not row["payload"].get("date")
+                    or portfolio_trading_day(parse_time(row["occurred_at"]))["date"]
+                    == row["payload"]["date"]
+                ]
             points = [
                 {**row["payload"], "occurred_at": row["occurred_at"], "kind": kind} for row in rows
             ]
+            if kind == "minute" and windows:
+                close = parse_time(windows[-1]["end"])
+                if current >= close:
+                    cutoff = min(current, close + timedelta(minutes=5))
+                    _, closing_value = self._value(cutoff)
+                    closing_items = [
+                        item
+                        for item in closing_value["items"]
+                        if any(
+                            parse_time(interval["end"]) == close
+                            for interval in trading_windows(trading["date"], [item["market"]])
+                        )
+                    ]
+                    if closing_items and all(
+                        item.get("market_date") == trading["date"]
+                        and item.get("price_at")
+                        and close - timedelta(seconds=90) <= parse_time(item["price_at"]) <= cutoff
+                        for item in closing_items
+                    ):
+                        source_at = max(parse_time(item["price_at"]) for item in closing_items)
+                        if not points or parse_time(points[-1]["occurred_at"]) < source_at:
+                            points.append(
+                                {
+                                    **closing_value,
+                                    "occurred_at": timestamp(source_at),
+                                    "kind": "close",
+                                    "chart_at": timestamp(close),
+                                    "trading_window": len(windows) - 1,
+                                    "break_before": True,
+                                }
+                            )
+            if kind == "daily" and points:
+                # Long ranges show daily history plus the newest actual sample.
+                # Keep it separate so no line invents a missing intraday interval.
+                latest = self.database.one(
+                    "SELECT occurred_at,payload FROM investment_snapshots "
+                    "WHERE kind='minute' AND occurred_at>? AND occurred_at<=? "
+                    "ORDER BY occurred_at DESC LIMIT 1",
+                    (points[-1]["occurred_at"], timestamp(current)),
+                )
+                if latest:
+                    import json
+
+                    points.append(
+                        {
+                            **json.loads(latest["payload"]),
+                            "occurred_at": latest["occurred_at"],
+                            "kind": "latest_sample",
+                            "break_before": True,
+                        }
+                    )
             points, return_metadata = self._time_weighted_curve(points, current)
-        items, segments, segment, previous = [], [], [], None
+            for point in points:
+                if point.get("chart_stale"):
+                    for field in (
+                        "total",
+                        "total_assets",
+                        "cumulative_pnl",
+                        "time_weighted_return",
+                        "compounded_return",
+                    ):
+                        point[field] = None
+                    point["complete"] = False
+        items, segments, segment, previous, previous_window = [], [], [], None, None
         gap = timedelta(seconds=90) if kind == "minute" else timedelta(hours=36)
         for point in points:
             point["cumulative_return"] = cumulative_return_percentage(
                 point.get("cumulative_pnl"), point.get("net_invested")
             )
             stamp = parse_time(point["occurred_at"])
+            if kind == "minute":
+                with localcontext() as context:
+                    context.prec = 100
+                    external = ZERO
+                    for flow in daily_state.external_flows:
+                        if start < parse_time(flow["occurred_at"]) <= stamp:
+                            if flow["amount"] is None:
+                                external = None
+                                break
+                            external += flow["amount"]
+                    total = point.get("total_assets", point.get("total"))
+                    pnl = (
+                        Decimal(total) - Decimal(daily_baseline["total"]) - external
+                        if total is not None
+                        and daily_baseline["total"] is not None
+                        and external is not None
+                        else None
+                    )
+                    point["daily_pnl"] = decimal_string(pnl)
+                    point["daily_return"] = cumulative_return_percentage(
+                        pnl, daily_baseline["total"]
+                    )
+                    point["daily_baseline_assets"] = daily_baseline["total"]
+                    point["daily_net_external"] = decimal_string(external)
+                    point["daily_return_estimated"] = bool(
+                        daily_baseline.get("estimated") or point.get("estimated")
+                    )
             valid = point.get("total") is not None and point.get("cumulative_pnl") is not None
-            break_before = not valid or (previous is not None and stamp - previous > gap)
+            break_before = (
+                bool(point.get("break_before"))
+                or not valid
+                or (previous is not None and stamp - previous > gap)
+                or (
+                    kind == "minute"
+                    and previous_window is not None
+                    and point.get("trading_window") != previous_window
+                )
+            )
             point["break_before"] = break_before
             if break_before and segment:
                 segments.append(segment)
@@ -452,6 +700,7 @@ class InvestmentService:
                 segment.append(point)
             items.append(point)
             previous = stamp
+            previous_window = point.get("trading_window")
         if segment:
             segments.append(segment)
         return {
@@ -462,6 +711,11 @@ class InvestmentService:
             "segments": segments,
             "currency": "CNY",
             "complete": all(point.get("complete", False) for point in items),
+            "trading_date": trading["date"] if kind == "minute" else None,
+            "daily_baseline_at": timestamp(start) if kind == "minute" else None,
+            "daily_baseline_assets": daily_baseline["total"] if kind == "minute" else None,
+            "baseline_point": baseline_point,
+            "trading_windows": windows,
             **return_metadata,
         }
 
@@ -575,9 +829,25 @@ class InvestmentService:
             }
             if "A" in active:
                 active.add("FUND")
+            closing = {
+                row["market"]
+                for row in self._sessions
+                if row.get("state") == "closed"
+                and row.get("close_at")
+                and parse_time(row["close_at"])
+                <= at
+                <= parse_time(row["close_at"])
+                + timedelta(seconds=300 + row.get("quote_delay_seconds", 0))
+                and self.repository.get_setting("closing_sample:" + row["market"])
+                != row.get("market_date")
+            }
+            if "A" in closing:
+                closing.add("FUND")
             if active_only:
                 instruments = [
-                    instrument for instrument in instruments if instrument["market"] in active
+                    instrument
+                    for instrument in instruments
+                    if instrument["market"] in active | closing
                 ]
             cash = self._ledger().replay(records, at).cash
             currency_markets = {"USD": "US", "HKD": "HK"}
@@ -611,6 +881,31 @@ class InvestmentService:
                     ]
                     if name == "quotes":
                         self.repository.save_prices(rows)
+                        for session in self._sessions:
+                            market = session["market"]
+                            expected = [
+                                item
+                                for item in instruments
+                                if item["market"]
+                                in ({market, "FUND"} if market == "A" else {market})
+                            ]
+                            if (
+                                market in closing
+                                and expected
+                                and all(
+                                    any(
+                                        row["market"] == item["market"]
+                                        and row["symbol"] == item["symbol"]
+                                        and parse_time(row["occurred_at"])
+                                        >= parse_time(session["close_at"])
+                                        for row in rows
+                                    )
+                                    for item in expected
+                                )
+                            ):
+                                self.repository.set_setting(
+                                    "closing_sample:" + market, session["market_date"]
+                                )
                     else:
                         self.repository.save_fx(rows)
                 except (ValueError, KeyError, TypeError):

@@ -144,7 +144,7 @@ test("new drafts use configured speech defaults and keep remembered choices", as
     tts_models: { providers: { minimax: { default_voice_id: "warm-voice", default_model: "speech-test" } } },
   } }));
   await page.route("**/api/voices?mode=api", route => route.fulfill({ json: [{ id: "warm-voice", name: "温暖配音" }] }));
-  await page.goto("/");
+  await page.goto("/studio");
   await expect(page.locator(".compact-select")).toHaveValue("api");
   await expect(page.getByRole("combobox", { name: "配音音色" })).toHaveValue("warm-voice");
   await page.locator(".compact-select").selectOption("local");
@@ -163,7 +163,7 @@ test("新草稿带出火柴人前缀，提交创作并保留用户清空选择",
     submitted = route.request().postDataJSON();
     return route.fulfill({ json: { id: "job1", status: "pending", work_id: "example1" } });
   });
-  await page.goto("/");
+  await page.goto("/studio");
   await page.getByText("更多创作选项", { exact: true }).click();
   const field = page.getByRole("textbox", { name: "画面风格描述 Prompt 前缀", exact: true });
   await expect(field).toHaveValue(prefix);
@@ -191,7 +191,7 @@ test("设置晚到时保留已编辑的风格，并为旧草稿补齐缺失前�
     await new Promise<void>(resolve => { release = resolve; });
     await route.fulfill({ json: { media: { image: { prompt_prefix: prefix } } } });
   });
-  await page.goto("/");
+  await page.goto("/studio");
   await page.getByText("更多创作选项", { exact: true }).click();
   const field = page.getByRole("textbox", { name: "画面风格描述 Prompt 前缀", exact: true });
   await field.fill("自己的画面风格");
@@ -213,7 +213,7 @@ test("创作页文字清晰，桌面与手机首屏都能找到生成入口", as
   await fixture(page);
   for (const width of [390, 1440]) {
     await page.setViewportSize({ width, height: 900 });
-    await page.goto("/");
+    await page.goto("/studio");
     await expect(page.getByRole("heading", { name: "创作内容", exact: true })).toBeVisible();
     const action = page.getByRole("button", { name: "生成视频", exact: true });
     const bounds = await action.boundingBox();
@@ -248,7 +248,7 @@ test("固定模板直接显示效果图，个人修改才渲染", async ({ page 
     if (requests.length === 1) await new Promise<void>(resolve => { finishUpdate = resolve; });
     await route.fulfill({ json: { url: `data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='108' height='192'%3E%3Ctext%3E${encodeURIComponent(body.title)}%3C/text%3E%3C/svg%3E` } });
   });
-  await page.goto("/");
+  await page.goto("/studio");
   const image = page.getByAltText("当前模板真实渲染预览");
   await expect(image).toBeVisible();
   await page.waitForTimeout(650);
@@ -290,7 +290,7 @@ test("手机风格列表和大预览显示真实效果，个人预览失败可�
       ? { status: 503, json: { detail: "预览暂时不可用" } }
       : { json: { url: `data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='108' height='192'%3E%3Ctext%3E${body.template_id}%3C/text%3E%3C/svg%3E` } });
   });
-  await page.goto("/");
+  await page.goto("/studio");
   const preview = page.getByAltText("当前模板真实渲染预览");
   await expect(page.locator(".creation-column img")).toHaveCount(0);
   await page.getByRole("button", { name: "更换风格", exact: true }).click();
@@ -326,7 +326,7 @@ for (const width of [360, 390, 768, 1440]) {
   test(`创作、作品库和分镜编辑 ${width}px`, async ({ page }) => {
     await page.setViewportSize({ width, height: 960 });
     await fixture(page);
-    await page.goto("/");
+    await page.goto("/studio");
     await expect(page.getByRole("heading", { name: /让想法/ })).toBeVisible();
     await noOverflow(page);
     await page.screenshot({
@@ -377,7 +377,7 @@ for (const width of [360, 390, 768, 1440]) {
 }
 test("设置中的密钥聚焦不清空", async ({ page }) => {
   await fixture(page);
-  await page.goto("/");
+  await page.goto("/studio");
   await page
     .getByRole("button", { name: "创作设置", exact: true })
     .filter({ visible: true })
@@ -392,7 +392,7 @@ test("登录页面与会话过期", async ({ page }) => {
   await page.route("**/api/auth/me", (route) =>
     route.fulfill({ status: 401, json: { detail: "请登录" } }),
   );
-  await page.goto("/");
+  await page.goto("/studio");
   await expect(
     page.getByRole("heading", { name: "欢迎回到创作空间" }),
   ).toBeVisible();

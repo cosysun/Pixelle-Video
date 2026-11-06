@@ -8,8 +8,10 @@ from pixelle_video.investment.market import (
     MarketProvider,
     daily_timestamp,
     parse_tencent,
+    portfolio_trading_day,
     quote_code,
     session_status,
+    trading_windows,
 )
 
 
@@ -43,6 +45,9 @@ def test_calendars_break_holiday_half_day_and_daylight_savings():
     assert session_status("US", utc("2026-11-05T13:35:00"))["state"] == "closed"
     assert session_status("US", utc("2026-11-05T14:35:00"))["state"] == "open"
     assert session_status("US", utc("2026-11-27T19:00:00"))["state"] == "closed"
+    assert session_status("US", utc("2026-11-27T19:00:00"))["close_at"].startswith(
+        "2026-11-27T18:00:00"
+    )
     assert daily_timestamp("US", "2026-11-27").startswith("2026-11-27T18:00:00")
 
 
@@ -107,3 +112,105 @@ async def test_reference_fx_retains_source_timestamp_and_rejects_missing_time():
     assert len(rows) == 1
     assert rows[0]["currency"] == "HKD"
     assert rows[0]["occurred_at"] == datetime.fromtimestamp(1793786400, timezone.utc).isoformat()
+
+
+@pytest.mark.asyncio
+async def test_berkshire_history_resolves_provider_share_class_and_keeps_ledger_symbol():
+    seen = []
+
+    def handle(request):
+        seen.append(request)
+        if request.url.host == "searchapi.eastmoney.com":
+            assert request.url.params["input"] == "BRK_B"
+            return httpx.Response(
+                200,
+                json={"QuotationCodeTable": {"Data": [{"Code": "BRK_B", "QuoteID": "106.BRK_B"}]}},
+            )
+        assert request.url.params["secid"] == "106.BRK_B"
+        return httpx.Response(200, json={"data": {"klines": ["2026-11-05,100,110,120"]}})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handle)) as client:
+        rows = await MarketProvider(client).history(
+            {"market": "US", "symbol": "BRK.B"}, "2026-11-05", "2026-11-05"
+        )
+    assert len(seen) == 2
+    assert rows[0]["symbol"] == "BRK.B" and rows[0]["price"] == "110"
+
+
+@pytest.mark.asyncio
+async def test_unresolved_supported_history_symbol_cannot_silently_complete_refresh():
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(
+            lambda request: httpx.Response(200, json={"QuotationCodeTable": {"Data": []}})
+        )
+    ) as client:
+        with pytest.raises(ValueError, match="历史行情代码"):
+            await MarketProvider(client).history(
+                {"market": "US", "symbol": "SYNTH"}, "2026-11-05", "2026-11-05"
+            )
+
+
+@pytest.mark.parametrize(
+    "at,day",
+    [
+        ("2026-11-05T15:00:00+00:00", "2026-11-05"),
+        ("2026-11-05T17:00:00+00:00", "2026-11-05"),
+        ("2026-11-06T01:29:00+00:00", "2026-11-05"),
+        ("2026-11-06T01:30:00+00:00", "2026-11-06"),
+        ("2026-11-08T02:00:00+00:00", "2026-11-06"),
+        ("2026-07-03T17:00:00+00:00", "2026-07-03"),
+        ("2026-10-01T13:29:00+00:00", "2026-09-30"),
+        ("2026-10-01T13:30:00+00:00", "2026-10-01"),
+    ],
+)
+def test_portfolio_trading_day_rolls_only_at_market_open(at, day):
+    trading = portfolio_trading_day(datetime.fromisoformat(at))
+    assert trading["date"] == day
+    assert trading["previous_date"] < day
+    assert trading["baseline_at"] <= datetime.fromisoformat(at)
+
+
+def test_trading_windows_compress_lunch_and_follow_dst_holidays_half_days():
+    windows = trading_windows("2026-11-05")
+    assert [(w["start"][11:16], w["end"][11:16]) for w in windows] == [
+        ("01:30", "04:00"),
+        ("05:00", "08:00"),
+        ("14:30", "21:00"),
+    ]
+    assert trading_windows("2026-07-02", ["US"])[0]["start"][11:16] == "13:30"
+    assert trading_windows("2026-11-27", ["US"])[0]["end"][11:16] == "18:00"
+    assert trading_windows("2026-11-08") == []
+
+
+@pytest.mark.parametrize(
+    "market,source,at,price_at,stale",
+    [
+        ("HK", "tencent", "02:30:40", "02:15:33", False),
+        ("HK", "tencent", "02:30:40", "02:09:33", True),
+        ("HK", "other", "02:30:40", "02:15:33", True),
+        ("A", "tencent", "02:30:40", "02:15:33", True),
+        ("A", "tencent", "02:30:40", "02:30:33", False),
+        ("HK", "tencent", "05:00:40", "03:59:59", False),
+        ("HK", "tencent", "05:20:40", "03:59:59", True),
+        ("HK", "tencent", "08:15:40", "07:59:59", False),
+        ("HK", "tencent", "02:30:40", "02:31:00", True),
+        ("HK", "tencent", "02:30:40", None, True),
+    ],
+)
+def test_quote_freshness_accounts_for_source_delay_and_lunch(market, source, at, price_at, stale):
+    from pixelle_video.investment.market import quote_is_stale
+
+    item = {
+        "market": market,
+        "source": source,
+        "price_at": f"2026-11-06T{price_at}+00:00" if price_at else None,
+    }
+    assert quote_is_stale(item, datetime.fromisoformat(f"2026-11-06T{at}+00:00")) is stale
+
+
+def test_public_provider_declares_hk_delay_without_changing_session_hours():
+    rows = MarketProvider().sessions(datetime.fromisoformat("2026-11-06T08:05:00+00:00"))
+    hk = next(row for row in rows if row["market"] == "HK")
+    assert hk["state"] == "closed" and hk["quote_delay_seconds"] == 900
+    assert hk["close_at"].startswith("2026-11-06T08:00:00")
+    assert all(row["quote_delay_seconds"] == 0 for row in rows if row["market"] != "HK")

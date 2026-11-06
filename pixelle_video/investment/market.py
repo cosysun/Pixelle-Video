@@ -65,6 +65,9 @@ def session_status(market, at=None):
         minute = pd.Timestamp(at).floor("min")
         local_day = at.astimezone(market_timezone(market)).date().isoformat()
         next_open = None
+        close_at = None
+        if calendar.is_session(local_day):
+            close_at = calendar.session_close(local_day).isoformat()
         if calendar.is_open_on_minute(minute, ignore_breaks=False):
             state = "open"
         elif calendar.is_session(local_day):
@@ -79,7 +82,13 @@ def session_status(market, at=None):
             state = "closed"
         if next_open is None and state != "open":
             next_open = calendar.next_open(minute).isoformat()
-        return {"market": market, "state": state, "next_open": next_open}
+        return {
+            "market": market,
+            "state": state,
+            "next_open": next_open,
+            "close_at": close_at,
+            "market_date": local_day,
+        }
     except (ValueError, KeyError, IndexError, OverflowError):
         # Unknown calendar coverage must not silently turn a holiday into a weekday.
         return {
@@ -88,6 +97,83 @@ def session_status(market, at=None):
             "next_open": None,
             "message": "交易日历超出覆盖范围，请更新行情日历依赖",
         }
+
+
+def portfolio_trading_day(at):
+    """Keep a shared market date until the next market's regular session opens."""
+    import pandas as pd
+
+    at = pd.Timestamp(at)
+    candidates = []
+    calendars = [trading_calendar(name) for name in ("XSHG", "XHKG", "XNYS")]
+    for calendar, zone in zip(calendars, (SHANGHAI, SHANGHAI, NEW_YORK), strict=True):
+        day = at.tz_convert(zone).date().isoformat()
+        session = calendar.date_to_session(day, direction="previous")
+        if calendar.session_open(session) > at:
+            session = calendar.previous_session(session)
+        candidates.append(session.date())
+    day = max(candidates)
+    previous = max(
+        calendar.date_to_session((day - timedelta(days=1)).isoformat(), direction="previous").date()
+        for calendar in calendars
+    )
+    return {
+        "date": day.isoformat(),
+        "previous_date": previous.isoformat(),
+        "baseline_at": datetime.combine(previous + timedelta(days=1), time(8), SHANGHAI).astimezone(
+            UTC
+        ),
+        "end_at": datetime.combine(day + timedelta(days=1), time(8), SHANGHAI).astimezone(UTC),
+    }
+
+
+def trading_windows(day, markets=("A", "HK", "US")):
+    """Union of regular sessions; lunch, holidays and half days use calendars."""
+    intervals = []
+    for market in sorted(set(markets)):
+        name = CALENDARS.get(market)
+        if name is None:
+            continue
+        calendar = trading_calendar(name)
+        if not calendar.is_session(day):
+            continue
+        opened = calendar.session_open(day).to_pydatetime()
+        closed = calendar.session_close(day).to_pydatetime()
+        pause = calendar.session_break_start(day)
+        if str(pause) != "NaT":
+            resumed = calendar.session_break_end(day).to_pydatetime()
+            intervals.extend([(opened, pause.to_pydatetime()), (resumed, closed)])
+        else:
+            intervals.append((opened, closed))
+    merged = []
+    for start, end in sorted(intervals):
+        if merged and start <= merged[-1][1]:
+            merged[-1] = (merged[-1][0], max(end, merged[-1][1]))
+        else:
+            merged.append((start, end))
+    return [{"start": start.isoformat(), "end": end.isoformat()} for start, end in merged]
+
+
+def quote_delay_seconds(item):
+    """Tencent's public HK feed carries source times about 15 minutes behind."""
+    return 900 if item.get("market") == "HK" and item.get("source") == "tencent" else 0
+
+
+def quote_is_stale(item, at):
+    """Allow the feed's delay and compare against the last trading minute."""
+    source = item.get("price_at")
+    if source is None:
+        return True
+    source = datetime.fromisoformat(source.replace("Z", "+00:00"))
+    reference = at - timedelta(seconds=quote_delay_seconds(item))
+    day = at.astimezone(market_timezone(item["market"])).date().isoformat()
+    intervals = trading_windows(day, [item["market"]])
+    for interval in reversed(intervals):
+        opened = datetime.fromisoformat(interval["start"])
+        if reference >= opened:
+            reference = min(reference, datetime.fromisoformat(interval["end"]))
+            break
+    return source > at or reference - source > timedelta(minutes=5)
 
 
 def quote_code(instrument):
@@ -171,7 +257,13 @@ class MarketProvider:
                     await client.aclose()
 
     def sessions(self, at=None):
-        return [session_status(market, at) for market in ("A", "HK", "US")]
+        return [
+            {
+                **session_status(market, at),
+                "quote_delay_seconds": quote_delay_seconds({"market": market, "source": "tencent"}),
+            }
+            for market in ("A", "HK", "US")
+        ]
 
     async def quotes(self, instruments):
         supported = [item for item in instruments if quote_code(item)]
@@ -200,7 +292,7 @@ class MarketProvider:
         payload = await self._get(
             "https://searchapi.eastmoney.com/api/suggest/get",
             {
-                "input": symbol,
+                "input": symbol.replace(".", "_"),
                 "type": "14",
                 "count": "10",
                 "token": "D43BF722C8E33BDC906FB84D85E326E8",
@@ -218,6 +310,10 @@ class MarketProvider:
         start, end = date.fromisoformat(str(start)[:10]), date.fromisoformat(str(end)[:10])
         secid = await self._secid(instrument)
         if not secid:
+            if instrument["market"] in CALENDARS or instrument["market"] == "FX":
+                raise ValueError(
+                    f"无法识别 {instrument['market']}:{instrument['symbol']} 的历史行情代码"
+                )
             return []
         result = []
         cursor = start

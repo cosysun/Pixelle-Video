@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { NavLink, Route, Routes, useLocation, useNavigate } from "react-router-dom";
+import { Navigate, NavLink, Route, Routes, useLocation, useNavigate } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   ChartNoAxesCombined,
@@ -61,14 +61,14 @@ export default function App() {
       <Login
         onSuccess={() => {
           client.invalidateQueries({ queryKey: ["me"] });
-          navigate("/");
+          navigate("/investment", { replace: true });
         }}
       />
     );
   return (
     <div className="app-shell">
       <aside className="sidebar">
-        <NavLink className="brand" to="/" aria-label="Pixelle 首页">
+        <NavLink className="brand" to="/investment" aria-label="Pixelle 首页">
           <span className="brand-mark">
             p<span />
           </span>
@@ -78,7 +78,7 @@ export default function App() {
         </NavLink>
         <div className="nav-label">你的创作空间</div>
         <nav className="main-nav">
-          <NavLink to="/" end>
+          <NavLink to="/studio" end>
             <Sparkles size={20} />
             <span>快速创作</span>
           </NavLink>
@@ -151,8 +151,9 @@ export default function App() {
         </header>
         <main>
           <Routes>
+            <Route path="/" element={<Navigate to="/investment" replace />} />
             <Route
-              path="/"
+              path="/studio"
               element={<Studio onSettings={() => setSettings(true)} />}
             />
             <Route path="/investment" element={<Investment />} />
@@ -160,7 +161,7 @@ export default function App() {
             <Route path="/works/:id" element={<WorkDetail />} />
             <Route
               path="*"
-              element={<Studio onSettings={() => setSettings(true)} />}
+              element={<Navigate to="/investment" replace />}
             />
           </Routes>
         </main>
@@ -169,7 +170,7 @@ export default function App() {
         </footer>
       </div>
       <nav className="mobile-nav">
-        <NavLink to="/" end>
+        <NavLink to="/studio" end>
           <Sparkles size={21} />
           创作
         </NavLink>

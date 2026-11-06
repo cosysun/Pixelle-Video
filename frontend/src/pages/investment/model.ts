@@ -2,7 +2,10 @@ import { ApiError } from "../../api";
 
 export type Decimal = string | number | null;
 export type Period = "today" | "week" | "month" | "quarter" | "all";
-export const periods: [Period, string][] = [["today", "今日"], ["week", "近一周"], ["month", "近一月"], ["quarter", "近三月"], ["all", "全部"]];
+export const periods: [Period, string][] = [["today", "本交易日"], ["week", "近一周"], ["month", "近一月"], ["quarter", "近三月"], ["all", "全部"]];
+export const capitalReturnNote = "本金收益比例＝累计盈亏 ÷ 累计净投入 × 100%，包含期初浮盈浮亏。出入金会改变分母；净投入不大于零或估值缺失时不计算。";
+export const compoundedReturnNote = "复利累计收益率保留跟踪起点的已有收益率（当日累计盈亏 ÷ 累计净投入），再按（1＋期初收益率）×之后各段（1＋收益率）连乘后减 1。包含期初浮盈浮亏，之后剔除出入金影响，非年化。切换近一周、近一月、近三月、全部只改变展示区间，不重设起点。无后续出入金时与本金收益比例一致；出入金后两者可能不同。";
+export const dailyReturnNote = "交易日收益率＝交易日盈亏 ÷ 上一交易日日终总资产 × 100%。交易日盈亏＝该时点总资产 − 上一交易日日终总资产 − 期间净出入金。使用与交易日盈亏卡片相同的交易日与基准；下一交易日重新起算。估值缺失或基准资产不大于零时不计算。";
 export const actions = { buy: "买入", sell: "卖出", deposit: "入金", withdraw: "出金", dividend: "分红", fee: "费用", exchange: "换汇", split: "拆股" };
 export type Action = keyof typeof actions;
 export const recordActionName = (action: string) => (Object.assign({} as Record<string, string>, actions, { opening_position: "期初持仓", opening_capital: "期初投入", opening_cash: "期初现金" })[action] || action);
@@ -16,11 +19,21 @@ export interface Position {
 }
 export interface Overview {
   total_assets: Decimal; market_value: Decimal; cash: Decimal; cumulative_pnl: Decimal;
-  daily_pnl: Decimal; net_invested: Decimal; cumulative_return?: Decimal; updated_at: string | null; complete: boolean;
+  daily_pnl: Decimal; daily_return?: Decimal; net_invested: Decimal; cumulative_return?: Decimal; updated_at: string | null; complete: boolean;
+  daily_baseline_at?: string; daily_baseline_assets?: Decimal; daily_net_external?: Decimal; daily_date?: string; daily_previous_date?: string; daily_breakdown?: { market: string; pnl: Decimal }[];
   estimated?: boolean; warnings: string[]; cash_balances: { currency: string; balance: Decimal; rate: Decimal; cny_value: Decimal; fx_at?: string | null; fx_source?: string | null; fx_stale?: boolean }[];
   migration: Record<string, unknown>; sessions: { market: string; state: string; next_open?: string | null }[]; history_note: string;
 }
-export interface CurvePoint { occurred_at: string; total_assets: Decimal; cumulative_pnl: Decimal; cumulative_return: Decimal; time_weighted_return: Decimal; twr_estimated?: boolean; twr_warning?: string | null; kind: string; complete: boolean; break_before?: boolean }
+export interface CurvePoint { occurred_at: string; chart_at?: string; trading_window?: number; date?: string; total_assets: Decimal; cumulative_pnl: Decimal; cumulative_return: Decimal; daily_return?: Decimal; daily_return_estimated?: boolean; quote_delayed?: boolean; quote_delay_seconds?: number; time_weighted_return: Decimal; compounded_return?: Decimal; compounded_warning?: string | null; estimated?: boolean; twr_estimated?: boolean; twr_warning?: string | null; kind: string; complete: boolean; break_before?: boolean }
+
+export function curveTimestamp(point: CurvePoint | undefined, compact = false): string {
+  if (!point) return "时间未知";
+  if (point.kind === "daily" && point.date && /^\d{4}-\d{2}-\d{2}$/.test(point.date)) {
+    return `${point.date.replaceAll("-", "/")}${compact ? "" : " · 日终"}`;
+  }
+  if (point.kind === "baseline") return `${point.date?.replaceAll("-", "/") || timestamp(point.occurred_at, true)} · 上一交易日日终`;
+  return timestamp(point.occurred_at, compact);
+}
 export interface InvestmentRecord {
   id: string; action: Action | "opening_position" | "opening_capital" | "opening_cash"; occurred_at: string; date_only: boolean; market: string; symbol: string; name: string;
   currency: string; settlement_currency?: string | null; quantity?: Decimal; price?: Decimal; amount?: Decimal;

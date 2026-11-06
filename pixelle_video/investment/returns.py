@@ -11,6 +11,38 @@ from decimal import Decimal, localcontext
 from .ledger import ONE, ZERO, decimal_string, parse_time
 
 
+def seeded_compounded_points(points, initial_return):
+    """Link the recorded opening capital return to subsequent flow-neutral returns.
+
+    Keep the pure TWR field intact. A missing opening return cannot be replaced
+    by zero, and a missing flow boundary cannot be bridged by the opening value.
+    """
+    result = []
+    with localcontext() as context:
+        context.prec = 100
+        initial = Decimal(initial_return) if initial_return is not None else None
+        if initial is not None and (not initial.is_finite() or initial < -100):
+            initial = None
+        for original in points:
+            point = dict(original)
+            twr = point.get("time_weighted_return")
+            value = (
+                ((ONE + initial / 100) * (ONE + Decimal(twr) / 100) - ONE) * 100
+                if initial is not None and twr is not None
+                else None
+            )
+            if initial is not None and twr is not None and Decimal(twr) == ZERO:
+                value = initial
+            point["compounded_return"] = decimal_string(value)
+            point["compounded_warning"] = (
+                "缺少起点累计盈亏或大于零的累计净投入，无法确定期初收益率"
+                if initial is None
+                else point.get("twr_warning")
+            )
+            result.append(point)
+    return result
+
+
 def time_weighted_points(points, baseline, boundaries):
     """Return enriched copies, preserving the tracking baseline across windows."""
     result = []
